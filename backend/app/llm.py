@@ -7,6 +7,7 @@ NIM 注意事項（docs/02-architecture.md D5）：
   ThinkFilter 過濾，只輸出最終答案。
 """
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
@@ -18,10 +19,21 @@ from app.config import get_settings
 EMBED_BATCH_SIZE = 32
 _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_MAX_ATTEMPTS = 3
+_RETRY_MARKERS = ("resourceexhausted", "rate limit", "429", "overloaded", "503")
 
 
 class LLMError(RuntimeError):
     pass
+
+
+def _is_retryable(message: str) -> bool:
+    low = message.lower()
+    return any(m in low for m in _RETRY_MARKERS)
+
+
+async def _backoff(attempt: int) -> None:
+    await asyncio.sleep(4 * (attempt + 1))
 
 
 # ---------- embeddings ----------
@@ -32,17 +44,22 @@ async def _embed(texts: list[str], input_type: str) -> list[list[float]]:
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         for start in range(0, len(texts), EMBED_BATCH_SIZE):
             batch = texts[start : start + EMBED_BATCH_SIZE]
-            resp = await client.post(
-                f"{settings.embed_base_url}/embeddings",
-                headers={"Authorization": f"Bearer {settings.embed_api_key}"},
-                json={
-                    "model": settings.embed_model,
-                    "input": batch,
-                    "input_type": input_type,
-                    "truncate": "END",
-                },
-            )
-            if resp.status_code != 200:
+            for attempt in range(_MAX_ATTEMPTS):
+                resp = await client.post(
+                    f"{settings.embed_base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {settings.embed_api_key}"},
+                    json={
+                        "model": settings.embed_model,
+                        "input": batch,
+                        "input_type": input_type,
+                        "truncate": "END",
+                    },
+                )
+                if resp.status_code == 200:
+                    break
+                if attempt < _MAX_ATTEMPTS - 1 and _is_retryable(resp.text):
+                    await _backoff(attempt)
+                    continue
                 raise LLMError(f"embedding API {resp.status_code}: {resp.text[:300]}")
             data = sorted(resp.json()["data"], key=lambda d: d["index"])
             results.extend(d["embedding"] for d in data)
@@ -112,8 +129,27 @@ async def chat_stream(
 ) -> AsyncIterator[dict]:
     """逐段輸出 {"type":"token","text":…}，結尾輸出 {"type":"usage",…}。
 
-    max_tokens 對推理模型同時涵蓋思考段與答案，因此要留足（思考段可能吃掉數千 tokens）。
+    NIM 限流（ResourceExhausted）在尚未輸出任何 token 前可安全重試。
     """
+    for attempt in range(_MAX_ATTEMPTS):
+        yielded = False
+        try:
+            async for event in _chat_stream_once(
+                messages, max_tokens=max_tokens, temperature=temperature
+            ):
+                yielded = True
+                yield event
+            return
+        except LLMError as e:
+            if yielded or attempt == _MAX_ATTEMPTS - 1 or not _is_retryable(str(e)):
+                raise
+            await _backoff(attempt)
+
+
+async def _chat_stream_once(
+    messages: list[dict], *, max_tokens: int, temperature: float
+) -> AsyncIterator[dict]:
+    """單次串流呼叫。max_tokens 對推理模型同時涵蓋思考段與答案，要留足。"""
     settings = get_settings()
     payload = {
         "model": settings.llm_chat_model,
@@ -164,19 +200,26 @@ async def chat_stream(
 async def chat(
     messages: list[dict], *, max_tokens: int = 4096, temperature: float = 0.2
 ) -> tuple[str, dict]:
-    """非串流 chat。回傳 (過濾思考段後的文字, usage)。"""
+    """非串流 chat（限流自動重試）。回傳 (過濾思考段後的文字, usage)。"""
     settings = get_settings()
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(
-            f"{settings.llm_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            json={
-                "model": settings.llm_chat_model,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            },
-        )
+        for attempt in range(_MAX_ATTEMPTS):
+            resp = await client.post(
+                f"{settings.llm_base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                json={
+                    "model": settings.llm_chat_model,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                },
+            )
+            if resp.status_code == 200:
+                break
+            if attempt < _MAX_ATTEMPTS - 1 and _is_retryable(resp.text):
+                await _backoff(attempt)
+                continue
+            break
     if resp.status_code != 200:
         raise LLMError(f"chat API {resp.status_code}: {resp.text[:300]}")
     body = resp.json()
