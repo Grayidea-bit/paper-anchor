@@ -1,4 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import styles from "./ChatPane.module.css";
 import {
   createConversation,
@@ -38,6 +40,9 @@ function Chat({ documentId }: { documentId: number }) {
   const [convId, setConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
+  const [language, setLanguage] = useState(
+    () => localStorage.getItem("answer_lang") ?? "zh-TW",
+  );
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -91,21 +96,32 @@ function Chat({ documentId }: { documentId: number }) {
     const patchLast = (patch: (m: LocalMessage) => LocalMessage) =>
       setMessages((prev) => [...prev.slice(0, -1), patch(prev[prev.length - 1])]);
     try {
-      await streamMessage(convId, question, {
-        onToken: (text) => patchLast((m) => ({ ...m, content: m.content + text })),
-        onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
-        onDone: () => patchLast((m) => ({ ...m, pending: false })),
-        onError: (message) => {
-          setError(message);
-          patchLast((m) => ({ ...m, pending: false }));
+      await streamMessage(
+        convId,
+        question,
+        {
+          onToken: (text) => patchLast((m) => ({ ...m, content: m.content + text })),
+          onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
+          onDone: () => patchLast((m) => ({ ...m, pending: false })),
+          onError: (message) => {
+            setError(message);
+            // 沒有任何內容的 assistant 泡泡直接移除
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              return last?.role === "assistant" && !last.content
+                ? prev.slice(0, -1)
+                : [...prev.slice(0, -1), { ...last, pending: false }];
+            });
+          },
         },
-      });
+        { language },
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setStreaming(false);
     }
-  }, [convId, input, streaming]);
+  }, [convId, input, streaming, language]);
 
   const newConversation = useCallback(async () => {
     if (streaming) return;
@@ -131,11 +147,19 @@ function Chat({ documentId }: { documentId: number }) {
             key={i}
             className={m.role === "user" ? styles.userMsg : styles.assistantMsg}
           >
-            <ContentWithCitations
-              content={m.content}
-              citations={m.citations}
-              onCite={clickCitation}
-            />
+            {m.role === "assistant" ? (
+              <MarkdownWithCitations
+                content={m.content}
+                citations={m.citations}
+                onCite={clickCitation}
+              />
+            ) : (
+              <PlainWithCitations
+                content={m.content}
+                citations={m.citations}
+                onCite={clickCitation}
+              />
+            )}
             {m.pending && m.content === "" && <span className={styles.cursor}>▍</span>}
           </div>
         ))}
@@ -151,6 +175,18 @@ function Chat({ documentId }: { documentId: number }) {
         >
           ＋
         </button>
+        <select
+          className={styles.langSelect}
+          title="回答語言"
+          value={language}
+          onChange={(e) => {
+            setLanguage(e.target.value);
+            localStorage.setItem("answer_lang", e.target.value);
+          }}
+        >
+          <option value="zh-TW">中</option>
+          <option value="en">EN</option>
+        </select>
         <textarea
           className={styles.input}
           placeholder="就這篇文獻提問…（Enter 送出，Shift+Enter 換行）"
@@ -177,33 +213,72 @@ function Chat({ documentId }: { documentId: number }) {
   );
 }
 
-function ContentWithCitations({
-  content,
-  citations,
-  onCite,
-}: {
+interface ContentProps {
   content: string;
   citations: Citation[];
   onCite: (index: number, citations: Citation[]) => void;
+}
+
+function CiteChip({
+  index,
+  citations,
+  onCite,
+}: {
+  index: number;
+  citations: Citation[];
+  onCite: ContentProps["onCite"];
 }) {
-  const known = new Set(citations.map((c) => c.chunk_index));
+  const active = citations.some((c) => c.chunk_index === index);
+  return (
+    <button
+      className={active ? styles.citeChip : styles.citeChipInactive}
+      disabled={!active}
+      title={active ? "跳到原文" : "引用解析中…"}
+      onClick={() => onCite(index, citations)}
+    >
+      {index}
+    </button>
+  );
+}
+
+/** assistant 訊息：markdown 渲染；[C12] 先轉成 #cite-12 連結再畫成 chip */
+function MarkdownWithCitations({ content, citations, onCite }: ContentProps) {
+  const prepared = content.replace(/\[[Cc](\d+)\]/g, "[$1](#cite-$1)");
+  return (
+    <div className={styles.md}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children }) => {
+            const m = /^#cite-(\d+)$/.exec(href ?? "");
+            if (m) {
+              return (
+                <CiteChip index={Number(m[1])} citations={citations} onCite={onCite} />
+              );
+            }
+            return (
+              <a href={href} target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {prepared}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+/** user 訊息：純文字（保留換行），引用標記仍可點 */
+function PlainWithCitations({ content, citations, onCite }: ContentProps) {
   return (
     <p className={styles.msgText}>
       {content.split(CITATION_SPLIT).map((part, i) => {
         const m = /^\[C(\d+)\]$/.exec(part);
         if (!m) return <Fragment key={i}>{part}</Fragment>;
-        const idx = Number(m[1]);
-        const active = known.has(idx);
         return (
-          <button
-            key={i}
-            className={active ? styles.citeChip : styles.citeChipInactive}
-            disabled={!active}
-            title={active ? "跳到原文" : "引用解析中…"}
-            onClick={() => onCite(idx, citations)}
-          >
-            {idx}
-          </button>
+          <CiteChip key={i} index={Number(m[1])} citations={citations} onCite={onCite} />
         );
       })}
     </p>

@@ -108,9 +108,12 @@ class ThinkFilter:
 
 
 async def chat_stream(
-    messages: list[dict], *, max_tokens: int = 2048, temperature: float = 0.3
+    messages: list[dict], *, max_tokens: int = 6144, temperature: float = 0.3
 ) -> AsyncIterator[dict]:
-    """逐段輸出 {"type":"token","text":…}，結尾輸出 {"type":"usage",…}。"""
+    """逐段輸出 {"type":"token","text":…}，結尾輸出 {"type":"usage",…}。
+
+    max_tokens 對推理模型同時涵蓋思考段與答案，因此要留足（思考段可能吃掉數千 tokens）。
+    """
     settings = get_settings()
     payload = {
         "model": settings.llm_chat_model,
@@ -138,6 +141,8 @@ async def chat_stream(
                 if data == "[DONE]":
                     break
                 event = json.loads(data)
+                if err := event.get("error"):
+                    raise LLMError(f"chat stream error: {json.dumps(err)[:300]}")
                 if usage := event.get("usage"):
                     yield {
                         "type": "usage",

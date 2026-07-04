@@ -39,7 +39,7 @@ def _select_chunks(chunks: list[dict]) -> tuple[list[dict], bool]:
     return head + tail, True
 
 
-async def generate_digest(doc_id: int) -> None:
+async def generate_digest(doc_id: int, language: str | None = None) -> None:
     async with SessionLocal() as session:
         doc = await repo.get_document(session, doc_id)
         if doc is None:
@@ -49,7 +49,7 @@ async def generate_digest(doc_id: int) -> None:
             return
         try:
             selected, truncated = _select_chunks(chunks)
-            system = load_prompt("digest_system.md").replace("{language}", _language())
+            system = load_prompt("digest_system.md").replace("{language}", _language(language))
             lines = [f"文獻標題：{doc['title']}", ""]
             if truncated:
                 lines.append("（注意：文獻過長，中段部分段落已省略）")

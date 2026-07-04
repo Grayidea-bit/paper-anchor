@@ -133,8 +133,9 @@ export function listMessages(convId: number): Promise<Message[]> {
   return request<Message[]>(`/api/conversations/${convId}/messages`);
 }
 
-export function regenerateDigest(docId: number): Promise<{ status: string }> {
-  return request<{ status: string }>(`/api/documents/${docId}/digest`, { method: "POST" });
+export function regenerateDigest(docId: number, language?: string): Promise<{ status: string }> {
+  const qs = language ? `?language=${encodeURIComponent(language)}` : "";
+  return request<{ status: string }>(`/api/documents/${docId}/digest${qs}`, { method: "POST" });
 }
 
 export interface StreamHandlers {
@@ -144,17 +145,26 @@ export interface StreamHandlers {
   onError: (message: string) => void;
 }
 
+export interface StreamOptions {
+  selection?: { text: string; chunk_id: number | null };
+  language?: string;
+}
+
 /** POST 提問並解析 SSE 串流（token* → citations → done | error） */
 export async function streamMessage(
   convId: number,
   content: string,
   handlers: StreamHandlers,
-  selection?: { text: string; chunk_id: number | null },
+  options: StreamOptions = {},
 ): Promise<void> {
   const resp = await fetch(`/api/conversations/${convId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, selection }),
+    body: JSON.stringify({
+      content,
+      selection: options.selection,
+      language: options.language,
+    }),
   });
   if (!resp.ok || !resp.body) {
     handlers.onError(`API ${resp.status}`);

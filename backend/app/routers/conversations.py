@@ -27,6 +27,7 @@ class Selection(BaseModel):
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
     selection: Selection | None = None
+    language: str | None = Field(default=None, pattern=r"^[A-Za-z-]{2,10}$")
 
 
 @router.get("/documents/{doc_id}/conversations")
@@ -92,6 +93,7 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
                 history,
                 body.content,
                 selection_text=body.selection.text if body.selection else None,
+                language=body.language,
             )
             parts: list[str] = []
             usage: dict = {}
@@ -105,6 +107,11 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
                         "completion_tokens": event["completion_tokens"],
                     }
             answer = "".join(parts)
+            if not answer.strip():
+                # 推理模型可能把 token 預算全花在思考段（finish=length）
+                msg = "模型沒有產出答案（思考超出長度限制），請重問或換個問法"
+                yield _sse("error", {"message": msg})
+                return
             citations = rag.parse_citations(answer, context)
             yield _sse("citations", {"citations": citations})
             async with SessionLocal() as session:

@@ -85,15 +85,17 @@ async def get_document_chunks(doc_id: int, limit: int = 500) -> list[dict]:
 
 
 @router.post("/{doc_id}/digest", status_code=202)
-async def regenerate_digest(doc_id: int, background_tasks: BackgroundTasks) -> dict:
-    """（重新）產生導讀；既有文獻補導讀用。"""
+async def regenerate_digest(
+    doc_id: int, background_tasks: BackgroundTasks, language: str | None = None
+) -> dict:
+    """（重新）產生導讀；既有文獻補導讀或切換導讀語言用。"""
     async with SessionLocal() as session:
         doc = await repo.get_document(session, doc_id)
     if doc is None:
         raise NotFoundError("document", doc_id)
     if doc["status"] != "ready":
         raise AppError("not_ready", "文獻尚未處理完成")
-    background_tasks.add_task(generate_digest, doc_id)
+    background_tasks.add_task(generate_digest, doc_id, language)
     return {"status": "digesting"}
 
 

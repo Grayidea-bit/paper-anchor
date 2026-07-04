@@ -37,7 +37,9 @@
 - [x] [sonnet] digest.py 自動導讀（長文獻頭尾取樣）+ 導讀卡 UI
 - [x] [haiku] conversations/messages CRUD + 歷史載入
 - **DoD**：✅ 指標 1（導讀卡五節全有引用、chips 可點跳轉；導讀改為 ready 後非同步補上，不擋閱讀）；指標 3（實測「訓練成本/雲端供應商」問題，回答「文獻中未提及」並附最接近段落）；指標 4（curl 建立的對話重開瀏覽器後完整重現）。瀏覽器實測：提問→串流回答→點引用 chip→跳第 7 頁高亮 Table 8，數字與回答吻合。
-- 發現事項（留給 M4）：(a) 回答中的 markdown 粗體未渲染，顯示原始 `**`；(b) 整份 PDF 一次渲染 9+ 張 canvas，CDP 截圖變慢、低階機器可能吃力 → 考慮頁面虛擬化；(c) ThinkFilter 與引用解析已有單元測試守護。
+- 發現事項（留給 M4）：(a) ~~markdown 未渲染~~ 已修（react-markdown + 引用 chip 保留）；(b) 整份 PDF 一次渲染 9+ 張 canvas，CDP 截圖變慢、低階機器可能吃力 → 考慮頁面虛擬化；(c) ThinkFilter 與引用解析已有單元測試守護。
+- 使用者回饋修正（2026-07-04）：markdown 渲染 ✅；回答語言中英切換 ✅（per-request `language` 參數 + UI 選單，localStorage 記憶；導讀重生成也支援 `?language=`）。
+- 穩定性修正：NIM 會在 SSE stream 內回傳錯誤物件（如 `ResourceExhausted` 限流），先前被靜默吞掉導致空回答入庫——現在偵測並回報 error 事件、空回答不入庫、prompt 過濾空歷史訊息、chat max_tokens 提高到 6144（推理段+答案共用預算）。
 
 ### M3 — 引用連動與選取提問（產品靈魂）
 - [ ] [opus] 引用端到端：LLM 標記 → 後端結構化 → 前端可點擊 → 跳頁高亮

@@ -18,10 +18,9 @@ def load_prompt(name: str) -> str:
     return (_PROMPTS / name).read_text(encoding="utf-8")
 
 
-def _language() -> str:
-    return {"zh-TW": "繁體中文", "zh-CN": "簡體中文", "en": "English"}.get(
-        get_settings().answer_language, get_settings().answer_language
-    )
+def _language(code: str | None = None) -> str:
+    code = code or get_settings().answer_language
+    return {"zh-TW": "繁體中文", "zh-CN": "簡體中文", "en": "English"}.get(code, code)
 
 
 async def retrieve_context(
@@ -60,15 +59,17 @@ def build_messages(
     history: list[dict],
     question: str,
     selection_text: str | None = None,
+    language: str | None = None,
 ) -> list[dict]:
-    system = load_prompt("chat_system.md").replace("{language}", _language())
+    system = load_prompt("chat_system.md").replace("{language}", _language(language))
     context_lines = [f"# 文獻：{doc['title']}", "", "# 可引用段落"]
     for c in context_chunks:
         context_lines.append(f"[C{c['chunk_index']}] (p.{c['page']}) {c['content']}")
     context_block = "\n".join(context_lines)
 
     messages: list[dict] = [{"role": "system", "content": system + "\n\n" + context_block}]
-    for m in history[-HISTORY_LIMIT:]:
+    # 空訊息（曾中斷的串流殘留）不進 prompt
+    for m in [m for m in history if m["content"].strip()][-HISTORY_LIMIT:]:
         messages.append({"role": m["role"], "content": m["content"]})
     user_content = question
     if selection_text:
