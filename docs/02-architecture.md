@@ -70,7 +70,8 @@
 - Chat 與 embedding 都走 `https://integrate.api.nvidia.com/v1`，OpenAI SDK 相容。
 - **Embedding 需帶 `input_type` 參數**（OpenAI SDK 用 `extra_body`）：入庫文件用 `"passage"`，查詢問題用 `"query"`——llm.py 的 embed 介面要區分這兩種模式，用錯會顯著拉低檢索品質。
 - Embedding 批量與單筆長度有上限，llm.py 內做分批與截斷保護。
-- 預設模型：chat `deepseek-ai/deepseek-v3.1`、embed `nvidia/llama-3.2-nv-embedqa-1b-v2`（2048 維，`EMBED_DIM` 需同步 schema 的 VECTOR 維度）。模型名以 .env 為準，程式碼不得寫死。
+- 預設模型：chat `deepseek-ai/deepseek-v3.1`、embed `nvidia/nv-embedqa-e5-v5`（1024 維，`EMBED_DIM` 需同步 schema 的 VECTOR 維度）。模型名以 .env 為準，程式碼不得寫死。
+- **維度上限**：pgvector 的 ivfflat/hnsw 索引上限 2000 維，選 embedding 模型時不得超過。
 
 ## 4. 資料模型
 
@@ -79,7 +80,7 @@ users        (id, email, created_at)                    -- MVP 單一預設 user
 documents    (id, user_id, title, filename, file_path, page_count,
               status, error_msg, digest JSONB, token_usage JSONB, created_at)
 chunks       (id, document_id, chunk_index, page, section,
-              content TEXT, bbox_list JSONB, embedding VECTOR(2048))  -- 維度=EMBED_DIM
+              content TEXT, bbox_list JSONB, embedding VECTOR(1024))  -- 維度=EMBED_DIM
 conversations(id, document_id, title, created_at)
 messages     (id, conversation_id, role, content TEXT,
               citations JSONB,      -- [{chunk_id, page, bbox_list}]

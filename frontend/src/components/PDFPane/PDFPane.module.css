@@ -1,0 +1,25 @@
+.pane {
+  flex: 1 1 58%;
+  min-width: 0;
+  overflow: auto;
+  background: #e9eaee;
+  border-right: 1px solid #d6d8de;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.placeholder {
+  text-align: center;
+}
+
+.hint {
+  font-size: 15px;
+  color: #4b5563;
+}
+
+.sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #9ca3af;
+}

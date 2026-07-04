@@ -1,0 +1,31 @@
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 52px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e4e8;
+}
+
+.title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.status {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.panes {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}

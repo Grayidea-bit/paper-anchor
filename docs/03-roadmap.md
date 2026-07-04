@@ -15,12 +15,12 @@
 
 ## 里程碑
 
-### M0 — 專案骨架（全部 [sonnet]，約 1 個工作段落）
-- [ ] backend：FastAPI 骨架 + config.py + /healthz
-- [ ] db：docker compose 起 Postgres+pgvector，schema.sql + migration 機制
-- [ ] frontend：Vite+React+TS 骨架，雙欄空版面
-- [ ] docker-compose.yaml 三服務一鍵啟動
-- **DoD**：`docker compose up` 後前後端互通、DB migration 可跑。
+### M0 — 專案骨架（全部 [sonnet]，約 1 個工作段落）✅ 2026-07-04
+- [x] backend：FastAPI 骨架 + config.py + /healthz
+- [x] db：docker compose 起 Postgres+pgvector，schema.sql + migration 機制
+- [x] frontend：Vite+React+TS 骨架，雙欄空版面
+- [x] docker-compose.yaml 三服務一鍵啟動
+- **DoD**：`docker compose up` 後前後端互通、DB migration 可跑。✅ 驗證：healthz db:true、6 張表建立、web :5173 proxy 通、pytest/ruff 過。
 
 ### M1 — 上傳與閱讀（引用地基）
 - [ ] [sonnet] POST/GET documents + 檔案儲存 + 狀態機
