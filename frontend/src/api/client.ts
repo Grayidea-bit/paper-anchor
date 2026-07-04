@@ -57,6 +57,7 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   citations: Citation[];
+  selection?: { text: string; chunk_id: number | null } | null;
   created_at: string;
 }
 

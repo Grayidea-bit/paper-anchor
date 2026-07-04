@@ -13,10 +13,11 @@ import {
   type Digest,
   type Message,
 } from "../../api/client";
-import { useReaderStore } from "../../stores/readerStore";
+import { useReaderStore, type SelectionAsk } from "../../stores/readerStore";
 import { useT, useUiStore } from "../../i18n";
 
 type LocalMessage = Omit<Message, "id" | "created_at"> & { pending?: boolean };
+type Attached = { text: string; chunkId: number | null };
 
 const CITATION_SPLIT = /(\[C\d+\])/g;
 
@@ -44,9 +45,11 @@ function Chat({ documentId }: { documentId: number }) {
   const [convId, setConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
+  const [attached, setAttached] = useState<Attached | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,45 +84,79 @@ function Chat({ documentId }: { documentId: number }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
 
+  const sendQuestion = useCallback(
+    async (question: string, selection: Attached | null) => {
+      if (!question || convId === null || streaming) return;
+      setError(null);
+      setStreaming(true);
+      const sel = selection
+        ? { text: selection.text, chunk_id: selection.chunkId }
+        : undefined;
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content: question, citations: [], selection: sel },
+        { role: "assistant", content: "", citations: [], pending: true },
+      ]);
+      const patchLast = (patch: (m: LocalMessage) => LocalMessage) =>
+        setMessages((prev) => [...prev.slice(0, -1), patch(prev[prev.length - 1])]);
+      try {
+        await streamMessage(
+          convId,
+          question,
+          {
+            onToken: (text) => patchLast((m) => ({ ...m, content: m.content + text })),
+            onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
+            onDone: () => patchLast((m) => ({ ...m, pending: false })),
+            onError: (message) => {
+              setError(message);
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                return last?.role === "assistant" && !last.content
+                  ? prev.slice(0, -1)
+                  : [...prev.slice(0, -1), { ...last, pending: false }];
+              });
+            },
+          },
+          { language: lang, selection: sel },
+        );
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setStreaming(false);
+      }
+    },
+    [convId, streaming, lang],
+  );
+
   const send = useCallback(async () => {
     const question = input.trim();
-    if (!question || convId === null || streaming) return;
+    if (!question) return;
     setInput("");
-    setError(null);
-    setStreaming(true);
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: question, citations: [] },
-      { role: "assistant", content: "", citations: [], pending: true },
-    ]);
-    const patchLast = (patch: (m: LocalMessage) => LocalMessage) =>
-      setMessages((prev) => [...prev.slice(0, -1), patch(prev[prev.length - 1])]);
-    try {
-      await streamMessage(
-        convId,
-        question,
-        {
-          onToken: (text) => patchLast((m) => ({ ...m, content: m.content + text })),
-          onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
-          onDone: () => patchLast((m) => ({ ...m, pending: false })),
-          onError: (message) => {
-            setError(message);
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              return last?.role === "assistant" && !last.content
-                ? prev.slice(0, -1)
-                : [...prev.slice(0, -1), { ...last, pending: false }];
-            });
-          },
-        },
-        { language: lang },
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setStreaming(false);
+    const sel = attached;
+    setAttached(null);
+    await sendQuestion(question, sel);
+  }, [input, attached, sendQuestion]);
+
+  // PDF 選取提問：預設動作直接送出，自由提問附掛到輸入區
+  const selectionAsk = useReaderStore((s) => s.selectionAsk);
+  const clearSelectionAsk = useReaderStore((s) => s.clearSelectionAsk);
+  useEffect(() => {
+    if (!selectionAsk || convId === null || streaming) return;
+    const req: SelectionAsk = selectionAsk;
+    clearSelectionAsk();
+    const sel = { text: req.text, chunkId: req.chunkId };
+    if (req.preset === "free") {
+      setAttached(sel);
+      inputRef.current?.focus();
+      return;
     }
-  }, [convId, input, streaming, lang]);
+    const question = {
+      explain: t.presetExplain,
+      translate: t.presetTranslate,
+      critique: t.presetCritique,
+    }[req.preset];
+    void sendQuestion(question, sel);
+  }, [selectionAsk, convId, streaming, clearSelectionAsk, sendQuestion, t]);
 
   const newConversation = useCallback(async () => {
     if (streaming) return;
@@ -146,6 +183,13 @@ function Chat({ documentId }: { documentId: number }) {
               {m.role === "user" ? "Q" : "A"}
             </span>
             <div className={styles.entryBody}>
+              {m.role === "user" && m.selection?.text && (
+                <blockquote className={styles.selQuote}>
+                  {m.selection.text.length > 200
+                    ? `${m.selection.text.slice(0, 200)}…`
+                    : m.selection.text}
+                </blockquote>
+              )}
               {m.role === "assistant" ? (
                 <MarkdownWithCitations
                   content={m.content}
@@ -172,6 +216,21 @@ function Chat({ documentId }: { documentId: number }) {
         {error && <p className={styles.error}>{error}</p>}
         <div ref={bottomRef} />
       </div>
+      {attached && (
+        <div className={styles.attachedBar}>
+          <span className={styles.attachedLabel}>{t.selectedPassage}</span>
+          <span className={styles.attachedText}>
+            {attached.text.length > 120 ? `${attached.text.slice(0, 120)}…` : attached.text}
+          </span>
+          <button
+            className={styles.attachedDismiss}
+            title={t.dismiss}
+            onClick={() => setAttached(null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <div className={styles.inputRow}>
         <button
           className={styles.newConvBtn}
@@ -182,6 +241,7 @@ function Chat({ documentId }: { documentId: number }) {
           ＋
         </button>
         <textarea
+          ref={inputRef}
           className={styles.input}
           placeholder={t.inputPlaceholder}
           rows={2}

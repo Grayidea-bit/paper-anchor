@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as pdfjs from "pdfjs-dist";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import { TextLayer } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import styles from "./PDFPane.module.css";
-import { documentFileUrl } from "../../api/client";
-import { useReaderStore, type HighlightTarget } from "../../stores/readerStore";
+import { documentFileUrl, getChunks, type Chunk } from "../../api/client";
+import {
+  useReaderStore,
+  type HighlightTarget,
+  type SelectionPreset,
+} from "../../stores/readerStore";
 import { Library } from "../Library/Library";
 import { useT } from "../../i18n";
 
@@ -12,13 +17,24 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 /** 渲染寬度基準：頁面實際縮放 = PAGE_WIDTH / 頁寬(pt) */
 const PAGE_WIDTH = 780;
+const MIN_SELECTION_CHARS = 8;
+
+interface SelMenu {
+  x: number;
+  y: number;
+  text: string;
+  page: number | null;
+}
 
 export function PDFPane() {
   const t = useT();
   const documentId = useReaderStore((s) => s.documentId);
   const highlight = useReaderStore((s) => s.highlight);
+  const requestSelectionAsk = useReaderStore((s) => s.requestSelectionAsk);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<SelMenu | null>(null);
+  const chunksRef = useRef<Chunk[] | null>(null);
 
   useEffect(() => {
     if (documentId === null) {
@@ -28,6 +44,7 @@ export function PDFPane() {
     let cancelled = false;
     let loaded: PDFDocumentProxy | null = null;
     setError(null);
+    chunksRef.current = null;
     pdfjs
       .getDocument(documentFileUrl(documentId))
       .promise.then((p) => {
@@ -42,6 +59,68 @@ export function PDFPane() {
     };
   }, [documentId]);
 
+  /** 選取文字對回 chunk：同頁 + 去空白後內容包含選取開頭 */
+  const resolveChunkId = useCallback(
+    async (text: string, page: number | null): Promise<number | null> => {
+      if (documentId === null) return null;
+      try {
+        chunksRef.current ??= await getChunks(documentId);
+      } catch {
+        return null;
+      }
+      const probe = text.replace(/\s+/g, "").slice(0, 40);
+      if (!probe) return null;
+      const pool = chunksRef.current.filter((c) => page === null || c.page === page);
+      const hit = pool.find((c) => c.content.replace(/\s+/g, "").includes(probe));
+      return hit?.id ?? null;
+    },
+    [documentId],
+  );
+
+  const onMouseUp = useCallback(() => {
+    // 等瀏覽器把 selection 定案再讀
+    requestAnimationFrame(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) {
+        setMenu(null);
+        return;
+      }
+      const text = sel.toString().trim();
+      if (text.length < MIN_SELECTION_CHARS) {
+        setMenu(null);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      const start =
+        range.startContainer instanceof Element
+          ? range.startContainer
+          : range.startContainer.parentElement;
+      const holder = start?.closest("[data-page]") as HTMLElement | null;
+      if (!holder) {
+        setMenu(null);
+        return;
+      }
+      setMenu({
+        x: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 200),
+        y: Math.max(rect.top - 44, 60),
+        text,
+        page: Number(holder.dataset.page) || null,
+      });
+    });
+  }, []);
+
+  const onAction = useCallback(
+    async (preset: SelectionPreset) => {
+      if (!menu) return;
+      const chunkId = await resolveChunkId(menu.text, menu.page);
+      requestSelectionAsk({ text: menu.text.slice(0, 3000), chunkId, preset });
+      setMenu(null);
+      window.getSelection()?.removeAllRanges();
+    },
+    [menu, resolveChunkId, requestSelectionAsk],
+  );
+
   if (documentId === null) {
     return (
       <section className={styles.pane} aria-label="文獻庫">
@@ -53,7 +132,7 @@ export function PDFPane() {
   }
 
   return (
-    <section className={styles.pane} aria-label="文獻閱讀器">
+    <section className={styles.pane} aria-label="文獻閱讀器" onMouseUp={onMouseUp}>
       {error && <p className={styles.error}>{t.pdfError}{error}</p>}
       {!pdf && !error && <p className={styles.loading}>{t.pdfLoading}</p>}
       <div className={styles.pages}>
@@ -62,6 +141,18 @@ export function PDFPane() {
             <PageCanvas key={n} pdf={pdf} pageNumber={n} highlight={highlight} />
           ))}
       </div>
+      {menu && (
+        <div
+          className={styles.selMenu}
+          style={{ left: menu.x, top: menu.y }}
+          onMouseUp={(e) => e.stopPropagation()}
+        >
+          <button onClick={() => void onAction("explain")}>{t.selExplain}</button>
+          <button onClick={() => void onAction("translate")}>{t.selTranslate}</button>
+          <button onClick={() => void onAction("critique")}>{t.selCritique}</button>
+          <button onClick={() => void onAction("free")}>{t.selAsk}</button>
+        </div>
+      )}
     </section>
   );
 }
@@ -77,11 +168,15 @@ function PageCanvas({
 }) {
   const holderRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState<number | null>(null);
   const active = highlight?.page === pageNumber;
 
   useEffect(() => {
     let cancelled = false;
+    // StrictMode 會雙跑 effect：cleanup 需 cancel() 進行中的 renderTask，
+    // 否則兩輪 render 撞同一個 canvas 會被 pdf.js 全數取消（頁面空白、scale 不設）
+    let renderTask: ReturnType<PDFPageProxy["render"]> | null = null;
     (async () => {
       const page = await pdf.getPage(pageNumber);
       if (cancelled) return;
@@ -98,19 +193,50 @@ function PageCanvas({
       canvas.style.height = `${viewport.height}px`;
       holder.style.width = `${viewport.width}px`;
       holder.style.height = `${viewport.height}px`;
-      await page.render({
+      renderTask = page.render({
         canvasContext: canvas.getContext("2d")!,
         viewport,
         transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
-      }).promise;
+      });
+      await renderTask.promise;
       if (!cancelled) setScale(pageScale);
-    })().catch(() => {
-      /* 單頁渲染失敗不擋整份文件 */
+    })().catch((e: unknown) => {
+      // 取消是預期行為；其他錯誤留下線索但不擋整份文件
+      if ((e as Error)?.name !== "RenderingCancelledException") {
+        console.warn(`[PDFPane] page ${pageNumber} render failed:`, e);
+      }
+    });
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+    };
+  }, [pdf, pageNumber]);
+
+  // 文字層（選取提問的基礎）：獨立 effect，等 canvas 完成（scale 就緒）才渲染，
+  // 避免與 canvas 渲染在同一 effect 內因 StrictMode 雙跑互相清空
+  useEffect(() => {
+    if (scale === null) return;
+    const textDiv = textRef.current;
+    if (!textDiv) return;
+    let cancelled = false;
+    (async () => {
+      const page = await pdf.getPage(pageNumber);
+      if (cancelled) return;
+      const viewport = page.getViewport({ scale });
+      textDiv.innerHTML = "";
+      textDiv.style.setProperty("--scale-factor", String(scale));
+      await new TextLayer({
+        textContentSource: page.streamTextContent(),
+        container: textDiv,
+        viewport,
+      }).render();
+    })().catch((e: unknown) => {
+      console.warn(`[PDFPane] page ${pageNumber} text layer failed:`, e);
     });
     return () => {
       cancelled = true;
     };
-  }, [pdf, pageNumber]);
+  }, [pdf, pageNumber, scale]);
 
   // 跳頁：引用錨點的前端終點。
   // 不用 scrollIntoView(smooth)：同幀插入高亮 DOM 會讓 Chrome 取消該動畫，
@@ -130,8 +256,9 @@ function PageCanvas({
   }, [active, highlight, scale]);
 
   return (
-    <div className={styles.page} ref={holderRef}>
+    <div className={styles.page} ref={holderRef} data-page={pageNumber}>
       <canvas ref={canvasRef} />
+      <div className={styles.textLayer} ref={textRef} />
       {/* 高亮層：PyMuPDF bbox 為頂左原點 pt 座標，乘 scale 即 CSS px */}
       {active &&
         scale !== null &&
