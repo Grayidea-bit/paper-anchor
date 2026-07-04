@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import get_settings
+from app.db import repo
 from app.db.session import SessionLocal
 from app.errors import AppError
 from app.routers import conversations, documents
@@ -18,6 +19,12 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
         status_code=exc.status,
         content={"error": {"code": exc.code, "message": exc.message}},
     )
+
+
+@app.get("/api/usage")
+async def total_usage() -> dict:
+    async with SessionLocal() as session:
+        return await repo.total_token_usage(session)
 
 
 @app.get("/healthz")

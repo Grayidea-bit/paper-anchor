@@ -10,7 +10,7 @@ import logging
 from app.db import repo
 from app.db.session import SessionLocal
 from app.llm import chat, extract_json
-from app.services.rag import _language, load_prompt
+from app.services.rag import language_name, load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,9 @@ async def generate_digest(doc_id: int, language: str | None = None) -> None:
             return
         try:
             selected, truncated = _select_chunks(chunks)
-            system = load_prompt("digest_system.md").replace("{language}", _language(language))
+            system = load_prompt("digest_system.md").replace(
+                "{language}", language_name(language)
+            )
             lines = [f"文獻標題：{doc['title']}", ""]
             if truncated:
                 lines.append("（注意：文獻過長，中段部分段落已省略）")

@@ -29,17 +29,19 @@ async def upload_document(file: UploadFile, background_tasks: BackgroundTasks) -
 
     max_bytes = settings.max_upload_mb * 1024 * 1024
     written = 0
-    async with aiofiles.open(str(dest), "wb") as f:
-        while chunk := await file.read(_WRITE_CHUNK):
-            written += len(chunk)
-            if written > max_bytes:
-                await f.close()
-                await dest.unlink(missing_ok=True)
-                raise AppError("file_too_large", f"檔案超過 {settings.max_upload_mb}MB 上限")
-            await f.write(chunk)
-    if written == 0:
+    try:
+        async with aiofiles.open(str(dest), "wb") as f:
+            while chunk := await file.read(_WRITE_CHUNK):
+                written += len(chunk)
+                if written > max_bytes:
+                    msg = f"檔案超過 {settings.max_upload_mb}MB 上限"
+                    raise AppError("file_too_large", msg)
+                await f.write(chunk)
+        if written == 0:
+            raise AppError("empty_file", "檔案是空的")
+    except AppError:
         await dest.unlink(missing_ok=True)
-        raise AppError("empty_file", "檔案是空的")
+        raise
 
     async with SessionLocal() as session:
         doc = await repo.create_document(session, file.filename or dest.name, str(dest))

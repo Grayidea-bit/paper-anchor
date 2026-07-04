@@ -92,6 +92,15 @@ export function getHealth(): Promise<Health> {
   return request<Health>("/healthz");
 }
 
+export interface Usage {
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export function getUsage(): Promise<Usage> {
+  return request<Usage>("/api/usage");
+}
+
 export function listDocuments(): Promise<Doc[]> {
   return request<Doc[]>("/api/documents");
 }

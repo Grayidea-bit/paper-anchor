@@ -40,6 +40,8 @@ const DICT = {
     presetCritique: "這段的論證、方法或假設有什麼可質疑之處？",
     selectedPassage: "已選取原文",
     dismiss: "移除",
+    retry: "重試",
+    totalUsage: "累計 token",
   },
   en: {
     appName: "Paper Reader",
@@ -78,6 +80,8 @@ const DICT = {
     presetCritique: "What in this passage's argument, method, or assumptions could be challenged?",
     selectedPassage: "Selected passage",
     dismiss: "Dismiss",
+    retry: "Retry",
+    totalUsage: "Total tokens",
   },
 } as const;
 

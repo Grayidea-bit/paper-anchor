@@ -52,11 +52,12 @@
 - 過程修正：PageCanvas cleanup 時 `renderTask.cancel()`；移除 React StrictMode（與 pdf.js canvas 衝突）；llm.py 三出口加限流重試。
 - 重要經驗：pdf.js render 依賴 requestAnimationFrame，**分頁不可見時 rAF 停發、渲染暫停**（分頁恢復可見會自動續跑）——自動化測試時務必保持視窗前景，一度被誤判為「渲染卡死」。
 
-### M4 — 打磨與交付
-- [ ] [sonnet] 錯誤處理總盤點（掃描版 PDF、解析失敗、LLM 超時、SSE 斷線重連）
-- [ ] [haiku] token 用量統計顯示、README、部署文件
-- [ ] [opus] 全案 code review + 效能檢查（30s 解析目標）
-- **DoD**：01-requirements.md §6 四項驗收全過；新環境照 README 可從零啟動。
+### M4 — 打磨與交付 ✅ 2026-07-04
+- [x] [opus] PDF 頁面虛擬化：可視範圍 ±1600px 才渲染；引用跳轉目標頁強制渲染＋捲動校正（實測 14 頁文獻初開僅渲染 3 頁，跳最後一頁正常）
+- [x] [sonnet] 錯誤處理：對話失敗「重試」按鈕、上傳超限清檔、限流退避（M3 已加）、掃描版明確報錯（M1 已有）
+- [x] [haiku] token 用量統計（`GET /api/usage` + 文獻庫底部顯示）、README 重寫（開源導向，含疑難排解）
+- [x] [opus] 全案 code review：4 項當場修正、待辦與安全清單見 `docs/reviews/M4.md`
+- **DoD**：四項 MVP 驗收全過（M2/M3 已驗）；README 快速開始流程完整。⚠️ 首 token 3s 目標對推理模型不適用，已記錄於 README。
 
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 

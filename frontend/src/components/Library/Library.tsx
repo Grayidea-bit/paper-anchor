@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./Library.module.css";
 import {
   deleteDocument,
+  getUsage,
   listDocuments,
   uploadDocument,
   type Doc,
+  type Usage,
 } from "../../api/client";
 import { useReaderStore } from "../../stores/readerStore";
 import { useT } from "../../i18n";
@@ -14,6 +16,7 @@ const PROCESSING = new Set(["uploaded", "parsing", "embedding", "digesting"]);
 export function Library() {
   const t = useT();
   const [docs, setDocs] = useState<Doc[]>([]);
+  const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -23,6 +26,7 @@ export function Library() {
 
   const refresh = useCallback(() => {
     listDocuments().then(setDocs).catch((e: Error) => setError(e.message));
+    getUsage().then(setUsage).catch(() => undefined);
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -113,6 +117,12 @@ export function Library() {
         ))}
         {docs.length === 0 && <p className={styles.empty}>{t.emptyLibrary}</p>}
       </ul>
+      {usage && (usage.prompt_tokens > 0 || usage.completion_tokens > 0) && (
+        <p className={styles.usage}>
+          {t.totalUsage}：in {usage.prompt_tokens.toLocaleString()} / out{" "}
+          {usage.completion_tokens.toLocaleString()}
+        </p>
+      )}
     </div>
   );
 }

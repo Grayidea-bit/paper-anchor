@@ -18,7 +18,8 @@ def load_prompt(name: str) -> str:
     return (_PROMPTS / name).read_text(encoding="utf-8")
 
 
-def _language(code: str | None = None) -> str:
+def language_name(code: str | None = None) -> str:
+    """語言代碼 → prompt 用的語言名稱；digest.py 也共用。"""
     code = code or get_settings().answer_language
     return {"zh-TW": "繁體中文", "zh-CN": "簡體中文", "en": "English"}.get(code, code)
 
@@ -61,7 +62,7 @@ def build_messages(
     selection_text: str | None = None,
     language: str | None = None,
 ) -> list[dict]:
-    system = load_prompt("chat_system.md").replace("{language}", _language(language))
+    system = load_prompt("chat_system.md").replace("{language}", language_name(language))
     context_lines = [f"# 文獻：{doc['title']}", "", "# 可引用段落"]
     for c in context_chunks:
         context_lines.append(f"[C{c['chunk_index']}] (p.{c['page']}) {c['content']}")

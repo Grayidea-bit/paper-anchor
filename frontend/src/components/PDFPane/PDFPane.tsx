@@ -157,6 +157,9 @@ export function PDFPane() {
   );
 }
 
+/** 預設佔位高度（US Letter 比例），首頁渲染後以實際高度取代 */
+const ESTIMATED_PAGE_HEIGHT = Math.round(PAGE_WIDTH * 1.294);
+
 function PageCanvas({
   pdf,
   pageNumber,
@@ -172,7 +175,30 @@ function PageCanvas({
   const [scale, setScale] = useState<number | null>(null);
   const active = highlight?.page === pageNumber;
 
+  // 頁面虛擬化：進入可視範圍（±~1.5 頁）才渲染；引用跳轉的目標頁立即渲染
+  const [visible, setVisible] = useState(pageNumber <= 3);
   useEffect(() => {
+    if (visible) return;
+    const holder = holderRef.current;
+    if (!holder) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { root: holder.closest("section"), rootMargin: "1600px 0px" },
+    );
+    observer.observe(holder);
+    return () => observer.disconnect();
+  }, [visible]);
+  useEffect(() => {
+    if (active) setVisible(true);
+  }, [active]);
+
+  useEffect(() => {
+    if (!visible) return;
     let cancelled = false;
     // StrictMode 會雙跑 effect：cleanup 需 cancel() 進行中的 renderTask，
     // 否則兩輪 render 撞同一個 canvas 會被 pdf.js 全數取消（頁面空白、scale 不設）
@@ -210,7 +236,7 @@ function PageCanvas({
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [pdf, pageNumber]);
+  }, [pdf, pageNumber, visible]);
 
   // 文字層（選取提問的基礎）：獨立 effect，等 canvas 完成（scale 就緒）才渲染，
   // 避免與 canvas 渲染在同一 effect 內因 StrictMode 雙跑互相清空
@@ -256,7 +282,16 @@ function PageCanvas({
   }, [active, highlight, scale]);
 
   return (
-    <div className={styles.page} ref={holderRef} data-page={pageNumber}>
+    <div
+      className={styles.page}
+      ref={holderRef}
+      data-page={pageNumber}
+      style={
+        scale === null
+          ? { width: PAGE_WIDTH, height: ESTIMATED_PAGE_HEIGHT }
+          : undefined
+      }
+    >
       <canvas ref={canvasRef} />
       <div className={styles.textLayer} ref={textRef} />
       {/* 高亮層：PyMuPDF bbox 為頂左原點 pt 座標，乘 scale 即 CSS px */}

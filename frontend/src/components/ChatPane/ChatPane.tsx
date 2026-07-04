@@ -50,6 +50,7 @@ function Chat({ documentId }: { documentId: number }) {
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const lastFailedRef = useRef<{ question: string; selection: Attached | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,6 +110,7 @@ function Chat({ documentId }: { documentId: number }) {
             onDone: () => patchLast((m) => ({ ...m, pending: false })),
             onError: (message) => {
               setError(message);
+              lastFailedRef.current = { question, selection };
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
                 return last?.role === "assistant" && !last.content
@@ -157,6 +159,21 @@ function Chat({ documentId }: { documentId: number }) {
     }[req.preset];
     void sendQuestion(question, sel);
   }, [selectionAsk, convId, streaming, clearSelectionAsk, sendQuestion, t]);
+
+  const retry = useCallback(() => {
+    const failed = lastFailedRef.current;
+    if (!failed || streaming) return;
+    lastFailedRef.current = null;
+    setError(null);
+    // 移除失敗殘留的 user 訊息，重送時會重新加入
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      return last?.role === "user" && last.content === failed.question
+        ? prev.slice(0, -1)
+        : prev;
+    });
+    void sendQuestion(failed.question, failed.selection);
+  }, [streaming, sendQuestion]);
 
   const newConversation = useCallback(async () => {
     if (streaming) return;
@@ -213,7 +230,16 @@ function Chat({ documentId }: { documentId: number }) {
             </div>
           </div>
         ))}
-        {error && <p className={styles.error}>{error}</p>}
+        {error && (
+          <div className={styles.error}>
+            {error}
+            {lastFailedRef.current && !streaming && (
+              <button className={styles.retryBtn} onClick={retry}>
+                {t.retry}
+              </button>
+            )}
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
       {attached && (

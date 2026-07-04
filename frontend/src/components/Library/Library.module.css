@@ -166,3 +166,12 @@
   font-size: 15px;
   padding: 40px 0;
 }
+
+.usage {
+  margin-top: 26px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}

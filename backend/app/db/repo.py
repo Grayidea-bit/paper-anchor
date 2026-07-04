@@ -206,6 +206,35 @@ async def chunks_by_ids(session: AsyncSession, doc_id: int, ids: list[int]) -> l
     return [_row_to_dict(r) for r in rows]
 
 
+async def total_token_usage(session: AsyncSession) -> dict:
+    """全站累計 token（messages 逐則 + documents 導讀）。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  COALESCE((SELECT SUM((token_usage->>'prompt_tokens')::bigint)
+                            FROM messages WHERE token_usage->>'prompt_tokens' IS NOT NULL), 0)
+                + COALESCE((SELECT SUM((token_usage#>>'{digest,prompt_tokens}')::bigint)
+                            FROM documents
+                            WHERE token_usage #>> '{digest,prompt_tokens}' IS NOT NULL), 0)
+                  AS prompt_tokens,
+                  COALESCE((SELECT SUM((token_usage->>'completion_tokens')::bigint)
+                            FROM messages WHERE token_usage->>'completion_tokens' IS NOT NULL), 0)
+                + COALESCE((SELECT SUM((token_usage#>>'{digest,completion_tokens}')::bigint)
+                            FROM documents
+                            WHERE token_usage #>> '{digest,completion_tokens}' IS NOT NULL), 0)
+                  AS completion_tokens
+                """
+            )
+        )
+    ).one()
+    return {
+        "prompt_tokens": int(row.prompt_tokens),
+        "completion_tokens": int(row.completion_tokens),
+    }
+
+
 # ---------- conversations / messages ----------
 
 async def create_conversation(session: AsyncSession, doc_id: int, title: str) -> dict:
