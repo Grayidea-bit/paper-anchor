@@ -1,70 +1,81 @@
-# AI 文獻導讀 · Paper Reader
+# ⚓ Paper Anchor
 
-> Read papers **with** an LLM, not just ask about them. Two-pane reader: PDF on the left, cited conversation on the right — every claim clickable back to the source.
+> **Every answer, anchored to the source.**
+> Read papers *with* an LLM — a two-pane reader where every AI claim is a clickable citation that jumps back to the exact highlighted passage in the PDF.
 
-讓使用者與 LLM 在「同一篇文獻」上互動的雙欄閱讀器：
+[繁體中文說明](README.zh-TW.md)
 
-- **引用可驗證**：LLM 回答附可點擊引用 `[C12]`，點了跳回 PDF 原文並高亮——這是本專案與「把 PDF 丟給聊天機器人」的核心差異。
-- **選取提問**：在 PDF 上圈選任一段文字，浮動選單一鍵「解釋／翻譯／質疑／提問」。
-- **自動導讀**：上傳後自動產生結構化導讀卡（研究問題／方法／發現／貢獻／限制），每個要點可跳轉原文。
-- **誠實回答**：文獻沒寫的就明說「文獻中未提及」，不編造（引用命中率評測 15/15）。
-- **雙語**：介面與回答語言一鍵切換 zh-TW / en。
+## Why another "chat with PDF" tool?
 
-## 快速開始
+Most tools give you answers you can't verify. Paper Anchor is built around one idea: **an answer you can't trace back to the source is a liability, not a feature.**
 
-需求：Docker（含 compose）、一把 [NVIDIA NIM](https://build.nvidia.com/) API key（免費註冊即有額度）。
+- **Anchored citations** — every claim in an answer carries a `[C12]` chip; click it and the PDF jumps to the page and highlights the exact source blocks (bbox-level, not just page numbers). Citation integrity is guarded by an automated eval (15/15 on the bundled test set).
+- **Select-to-ask** — select any passage in the PDF and instantly *explain / translate / challenge / ask* about it. The selected chunk (plus neighbors) is force-fed into retrieval.
+- **Auto digest** — structured overview on upload (research question / method / findings / contributions / limitations), each point clickable back to the source.
+- **Honest by design** — when the paper doesn't answer your question, it says so instead of hallucinating.
+- **Self-hosted & BYOK** — your PDFs never leave your machine except to the LLM provider *you* choose. Any OpenAI-compatible API works. `docker compose up` and you're done.
+- **Bilingual** — one-click zh-TW / en for both UI and answers.
+
+## Quick start
+
+Prereqs: Docker (with compose) and an API key from [NVIDIA NIM](https://build.nvidia.com/) (free tier available) or any OpenAI-compatible provider.
 
 ```bash
-git clone <this-repo> && cd ai-paper-reader
-cp .env.example .env        # 填入你的 NIM API key（LLM_API_KEY 與 EMBED_API_KEY）
-docker compose up -d        # web :5173 / api :8000 / db :5432
+git clone https://github.com/<you>/paper-anchor && cd paper-anchor
+cp .env.example .env      # fill in LLM_API_KEY and EMBED_API_KEY
+docker compose up -d      # web :5173 / api :8000 / db :5432
 ```
 
-打開 http://localhost:5173，上傳一篇 PDF 論文即可開始。
+Open http://localhost:5173 and upload a PDF.
 
-### 換模型 / 換供應商
+### Swapping models / providers
 
-任何 OpenAI 相容 API 都可以用，改 `.env` 即可：
+Everything is `.env`-driven:
 
 ```ini
-LLM_BASE_URL=...            # chat 供應商
+LLM_BASE_URL=...          # any OpenAI-compatible chat endpoint
 LLM_CHAT_MODEL=...
-EMBED_BASE_URL=...          # embedding 供應商（可與 chat 不同家）
+EMBED_BASE_URL=...        # embedding provider (can differ from chat)
 EMBED_MODEL=...
-EMBED_DIM=1024              # 需同步 DB schema 的 VECTOR 維度；上限 2000（pgvector 索引限制）
+EMBED_DIM=1024            # must match the DB VECTOR dim; pgvector index caps at 2000
 ```
 
-注意：NIM 的 embedding API 需要 `input_type` 參數（入庫 `passage`／查詢 `query`），`llm.py` 已處理；換供應商時留意這個差異。
+Note: NVIDIA NIM's embedding API requires an `input_type` parameter (`passage` for indexing, `query` for search) — handled in `llm.py`; keep this in mind when switching providers.
 
-## 技術棧
+## Stack
 
-FastAPI + PostgreSQL(pgvector) + PyMuPDF ｜ React + TypeScript + PDF.js ｜ RAG 手寫（無 LangChain）｜ Docker Compose
+FastAPI · PostgreSQL + pgvector · PyMuPDF | React · TypeScript · PDF.js | hand-rolled RAG (no LangChain) | Docker Compose
 
-## 文件
+## Docs
 
-| 文件 | 內容 |
+| Doc | Contents |
 |---|---|
-| [docs/01-requirements.md](docs/01-requirements.md) | 需求分析與驗收指標 |
-| [docs/02-architecture.md](docs/02-architecture.md) | 架構：引用錨點設計（D1）、chunking、資料模型、API 規格 |
-| [docs/03-roadmap.md](docs/03-roadmap.md) | 開發路線圖與各里程碑實錄 |
-| [CLAUDE.md](CLAUDE.md) | 開發守則（含 AI 協作開發規範） |
+| [docs/01-requirements.md](docs/01-requirements.md) | Requirements & acceptance criteria (zh-TW) |
+| [docs/02-architecture.md](docs/02-architecture.md) | Architecture: citation-anchor design, chunking, data model, API spec (zh-TW) |
+| [docs/03-roadmap.md](docs/03-roadmap.md) | Milestone log (zh-TW) |
+| [CLAUDE.md](CLAUDE.md) | Development ground rules (incl. AI-assisted dev conventions) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 
-## 開發
+## Development
 
 ```bash
-docker compose exec api pytest            # 後端測試
-docker compose exec api ruff check .      # lint
-docker compose exec web npx tsc -b        # 前端型別檢查
-docker compose exec api python -m scripts.eval_citations   # 引用命中率回歸（會呼叫 LLM）
+docker compose exec api pytest                              # backend tests
+docker compose exec api ruff check .                        # lint
+docker compose exec web npx tsc -b                          # typecheck
+docker compose exec api python -m scripts.eval_citations    # citation-integrity regression (calls LLM)
 ```
 
-## 疑難排解
+## Troubleshooting
 
-- **回答很久才出現第一個字**：預設模型 deepseek-v4-flash 是推理模型，思考段可能花 20–40 秒；可換 `deepseek-v4-pro` 或非推理模型。
-- **LLM 呼叫失敗（ResourceExhausted）**：NIM 免費端點限流；系統會自動退避重試，仍失敗按「重試」即可。
-- **切到別的分頁後 PDF 沒渲染完**：瀏覽器會暫停背景分頁的渲染（requestAnimationFrame），切回來會自動續跑，是正常行為。
-- **掃描版 PDF**：無文字層，MVP 不支援 OCR，上傳會明確報錯。
+- **First token is slow (20–40s)** — the default `deepseek-v4-flash` is a reasoning model; its thinking phase counts. Switch to a non-reasoning model if latency matters more than quality.
+- **`ResourceExhausted` errors** — NIM free-tier rate limiting. The app retries with backoff automatically; hit *Retry* if it still fails.
+- **PDF stops rendering when the tab is in the background** — browsers pause `requestAnimationFrame` for hidden tabs; rendering resumes when the tab is visible again. Expected behavior.
+- **Scanned PDFs** — no text layer, no OCR support yet; upload fails with a clear message.
 
-## 授權
+## Security notes for public deployment
 
-尚未決定（開源計畫中）。
+This is a single-user, local-first MVP. Before exposing it to the internet: add authentication, change the default DB credentials in `docker-compose.yaml`, and put the API behind TLS. See [docs/reviews/M4.md](docs/reviews/M4.md) for the full checklist.
+
+## License
+
+[MIT](LICENSE)

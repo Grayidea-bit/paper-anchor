@@ -8,7 +8,7 @@ from app.db.session import SessionLocal
 from app.errors import AppError
 from app.routers import conversations, documents
 
-app = FastAPI(title="AI Paper Reader", version="0.1.0")
+app = FastAPI(title="Paper Anchor", version="0.1.0")
 app.include_router(documents.router)
 app.include_router(conversations.router)
 

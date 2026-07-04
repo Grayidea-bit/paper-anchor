@@ -4,7 +4,7 @@ export type Lang = "zh-TW" | "en";
 
 const DICT = {
   "zh-TW": {
-    appName: "AI 文獻導讀",
+    appName: "Paper Anchor · 文獻導讀",
     backToLibrary: "← 文獻庫",
     apiOffline: "API 未連線",
     upload: "上傳 PDF 文獻",
@@ -44,7 +44,7 @@ const DICT = {
     totalUsage: "累計 token",
   },
   en: {
-    appName: "Paper Reader",
+    appName: "Paper Anchor",
     backToLibrary: "← Library",
     apiOffline: "API offline",
     upload: "Upload PDF",
