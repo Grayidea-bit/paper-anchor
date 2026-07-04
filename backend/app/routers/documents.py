@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.errors import AppError, NotFoundError
+from app.services.digest import generate_digest
 from app.services.ingest import ingest_document
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -81,6 +82,19 @@ async def get_document_chunks(doc_id: int, limit: int = 500) -> list[dict]:
         if doc is None:
             raise NotFoundError("document", doc_id)
         return await repo.get_chunks(session, doc_id, limit=min(limit, 500))
+
+
+@router.post("/{doc_id}/digest", status_code=202)
+async def regenerate_digest(doc_id: int, background_tasks: BackgroundTasks) -> dict:
+    """（重新）產生導讀；既有文獻補導讀用。"""
+    async with SessionLocal() as session:
+        doc = await repo.get_document(session, doc_id)
+    if doc is None:
+        raise NotFoundError("document", doc_id)
+    if doc["status"] != "ready":
+        raise AppError("not_ready", "文獻尚未處理完成")
+    background_tasks.add_task(generate_digest, doc_id)
+    return {"status": "digesting"}
 
 
 @router.delete("/{doc_id}", status_code=204)

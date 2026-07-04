@@ -1,0 +1,127 @@
+import json
+import logging
+
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from app.db import repo
+from app.db.session import SessionLocal
+from app.errors import AppError, NotFoundError
+from app.llm import LLMError, chat_stream, embed_query
+from app.services import rag
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api", tags=["conversations"])
+
+
+class ConversationCreate(BaseModel):
+    title: str = "新對話"
+
+
+class Selection(BaseModel):
+    text: str = Field(max_length=4000)
+    chunk_id: int | None = None
+
+
+class MessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=8000)
+    selection: Selection | None = None
+
+
+@router.get("/documents/{doc_id}/conversations")
+async def list_conversations(doc_id: int) -> list[dict]:
+    async with SessionLocal() as session:
+        if await repo.get_document(session, doc_id) is None:
+            raise NotFoundError("document", doc_id)
+        return await repo.list_conversations(session, doc_id)
+
+
+@router.post("/documents/{doc_id}/conversations", status_code=201)
+async def create_conversation(doc_id: int, body: ConversationCreate) -> dict:
+    async with SessionLocal() as session:
+        doc = await repo.get_document(session, doc_id)
+        if doc is None:
+            raise NotFoundError("document", doc_id)
+        if doc["status"] != "ready":
+            raise AppError("not_ready", "文獻尚未處理完成")
+        return await repo.create_conversation(session, doc_id, body.title)
+
+
+@router.get("/conversations/{conv_id}/messages")
+async def list_messages(conv_id: int) -> list[dict]:
+    async with SessionLocal() as session:
+        if await repo.get_conversation(session, conv_id) is None:
+            raise NotFoundError("conversation", conv_id)
+        return await repo.list_messages(session, conv_id)
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+@router.post("/conversations/{conv_id}/messages")
+async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
+    """RAG 對話（docs/02 D3）。回應為 SSE：token* → citations → done | error。"""
+    async with SessionLocal() as session:
+        conv = await repo.get_conversation(session, conv_id)
+        if conv is None:
+            raise NotFoundError("conversation", conv_id)
+        doc = await repo.get_document(session, conv["document_id"])
+        if doc is None:
+            raise NotFoundError("document", conv["document_id"])
+        history = await repo.list_messages(session, conv_id)
+
+    async def stream():
+        try:
+            async with SessionLocal() as session:
+                selection = body.selection.model_dump() if body.selection else None
+                await repo.add_message(
+                    session, conv_id, "user", body.content, selection=selection
+                )
+                query_embedding = await embed_query(body.content)
+                context = await rag.retrieve_context(
+                    session,
+                    doc["id"],
+                    query_embedding,
+                    selection_chunk_id=body.selection.chunk_id if body.selection else None,
+                )
+            messages = rag.build_messages(
+                doc,
+                context,
+                history,
+                body.content,
+                selection_text=body.selection.text if body.selection else None,
+            )
+            parts: list[str] = []
+            usage: dict = {}
+            async for event in chat_stream(messages):
+                if event["type"] == "token":
+                    parts.append(event["text"])
+                    yield _sse("token", {"text": event["text"]})
+                elif event["type"] == "usage":
+                    usage = {
+                        "prompt_tokens": event["prompt_tokens"],
+                        "completion_tokens": event["completion_tokens"],
+                    }
+            answer = "".join(parts)
+            citations = rag.parse_citations(answer, context)
+            yield _sse("citations", {"citations": citations})
+            async with SessionLocal() as session:
+                saved = await repo.add_message(
+                    session, conv_id, "assistant", answer,
+                    citations=citations, token_usage=usage,
+                )
+            yield _sse("done", {"message_id": saved["id"], "token_usage": usage})
+        except LLMError as e:
+            logger.exception("chat failed: conv=%s", conv_id)
+            yield _sse("error", {"message": f"LLM 呼叫失敗：{e}"})
+        except Exception:
+            logger.exception("chat failed: conv=%s", conv_id)
+            yield _sse("error", {"message": "系統錯誤，請稍後再試"})
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

@@ -12,6 +12,7 @@ import fitz  # PyMuPDF
 from app.db import repo
 from app.db.session import SessionLocal
 from app.llm import embed_passages
+from app.services.digest import generate_digest
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +122,11 @@ async def ingest_document(doc_id: int) -> None:
             embeddings = await embed_passages([c["content"] for c in chunks])
             await repo.update_chunk_embeddings(session, chunk_ids, embeddings)
 
-            # M2 在此接 digesting；目前直接 ready
+            # 先 ready 讓使用者可讀可問，導讀在背景補上（digest=null 時前端顯示產生中）
             await repo.set_document_status(session, doc_id, "ready")
             logger.info("ingest done: doc=%s pages=%s chunks=%s", doc_id, page_count, len(chunks))
         except Exception as e:
             logger.exception("ingest failed: doc=%s", doc_id)
             await repo.set_document_status(session, doc_id, "failed", error_msg=str(e)[:500])
+            return
+    await generate_digest(doc_id)

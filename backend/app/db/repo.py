@@ -135,6 +135,168 @@ async def update_chunk_embeddings(
     await session.commit()
 
 
+async def update_document_digest(
+    session: AsyncSession, doc_id: int, digest: dict, usage: dict
+) -> None:
+    await session.execute(
+        text(
+            """
+            UPDATE documents
+            SET digest = CAST(:digest AS jsonb),
+                token_usage = token_usage || CAST(:usage AS jsonb)
+            WHERE id = :id
+            """
+        ),
+        {"id": doc_id, "digest": json.dumps(digest), "usage": json.dumps({"digest": usage})},
+    )
+    await session.commit()
+
+
+async def similar_chunks(
+    session: AsyncSession, doc_id: int, embedding: list[float], k: int
+) -> list[dict]:
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, chunk_index, page, section, content, bbox_list
+            FROM chunks
+            WHERE document_id = :doc_id AND embedding IS NOT NULL
+            ORDER BY embedding <=> CAST(:emb AS vector)
+            LIMIT :k
+            """
+        ),
+        {"doc_id": doc_id, "emb": json.dumps(embedding), "k": k},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def chunks_by_indexes(
+    session: AsyncSession, doc_id: int, indexes: list[int]
+) -> list[dict]:
+    if not indexes:
+        return []
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, chunk_index, page, section, content, bbox_list
+            FROM chunks
+            WHERE document_id = :doc_id AND chunk_index = ANY(:indexes)
+            ORDER BY chunk_index
+            """
+        ),
+        {"doc_id": doc_id, "indexes": indexes},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def chunks_by_ids(session: AsyncSession, doc_id: int, ids: list[int]) -> list[dict]:
+    if not ids:
+        return []
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, chunk_index, page, section, content, bbox_list
+            FROM chunks
+            WHERE document_id = :doc_id AND id = ANY(:ids)
+            ORDER BY chunk_index
+            """
+        ),
+        {"doc_id": doc_id, "ids": ids},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+# ---------- conversations / messages ----------
+
+async def create_conversation(session: AsyncSession, doc_id: int, title: str) -> dict:
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO conversations (document_id, title)
+                VALUES (:doc_id, :title)
+                RETURNING id, document_id, title, created_at
+                """
+            ),
+            {"doc_id": doc_id, "title": title},
+        )
+    ).one()
+    await session.commit()
+    return _row_to_dict(row)
+
+
+async def list_conversations(session: AsyncSession, doc_id: int) -> list[dict]:
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, document_id, title, created_at
+            FROM conversations WHERE document_id = :doc_id ORDER BY created_at DESC
+            """
+        ),
+        {"doc_id": doc_id},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def get_conversation(session: AsyncSession, conv_id: int) -> dict | None:
+    row = (
+        await session.execute(
+            text(
+                "SELECT id, document_id, title, created_at FROM conversations WHERE id = :id"
+            ),
+            {"id": conv_id},
+        )
+    ).one_or_none()
+    return _row_to_dict(row) if row else None
+
+
+async def add_message(
+    session: AsyncSession,
+    conv_id: int,
+    role: str,
+    content: str,
+    citations: list | None = None,
+    selection: dict | None = None,
+    token_usage: dict | None = None,
+) -> dict:
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO messages
+                    (conversation_id, role, content, citations, selection, token_usage)
+                VALUES (:conv_id, :role, :content, CAST(:citations AS jsonb),
+                        CAST(:selection AS jsonb), CAST(:token_usage AS jsonb))
+                RETURNING id, role, content, citations, selection, token_usage, created_at
+                """
+            ),
+            {
+                "conv_id": conv_id,
+                "role": role,
+                "content": content,
+                "citations": json.dumps(citations or []),
+                "selection": json.dumps(selection) if selection else None,
+                "token_usage": json.dumps(token_usage or {}),
+            },
+        )
+    ).one()
+    await session.commit()
+    return _row_to_dict(row)
+
+
+async def list_messages(session: AsyncSession, conv_id: int) -> list[dict]:
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, role, content, citations, selection, token_usage, created_at
+            FROM messages WHERE conversation_id = :conv_id ORDER BY id
+            """
+        ),
+        {"conv_id": conv_id},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
 async def get_chunks(session: AsyncSession, doc_id: int, limit: int = 500) -> list[dict]:
     rows = await session.execute(
         text(

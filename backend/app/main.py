@@ -5,10 +5,11 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db.session import SessionLocal
 from app.errors import AppError
-from app.routers import documents
+from app.routers import conversations, documents
 
 app = FastAPI(title="AI Paper Reader", version="0.1.0")
 app.include_router(documents.router)
+app.include_router(conversations.router)
 
 
 @app.exception_handler(AppError)
