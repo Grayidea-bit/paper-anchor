@@ -5,6 +5,7 @@ import aiofiles
 from anyio import Path as AsyncPath
 from fastapi import APIRouter, BackgroundTasks, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.config import get_settings
 from app.db import repo
@@ -84,6 +85,25 @@ async def get_document_chunks(doc_id: int, limit: int = 500) -> list[dict]:
         if doc is None:
             raise NotFoundError("document", doc_id)
         return await repo.get_chunks(session, doc_id, limit=min(limit, 500))
+
+
+class DocumentPatch(BaseModel):
+    project_id: int | None = None
+
+
+@router.patch("/{doc_id}")
+async def patch_document(doc_id: int, body: DocumentPatch) -> dict:
+    """指派/移出專案（project_id=null → 未分類）。"""
+    async with SessionLocal() as session:
+        if body.project_id is not None and await repo.get_project(
+            session, body.project_id
+        ) is None:
+            raise NotFoundError("project", body.project_id)
+        if not await repo.set_document_project(session, doc_id, body.project_id):
+            raise NotFoundError("document", doc_id)
+        doc = await repo.get_document(session, doc_id)
+    doc.pop("file_path", None)
+    return doc
 
 
 @router.post("/{doc_id}/digest", status_code=202)

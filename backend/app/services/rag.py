@@ -1,4 +1,8 @@
-"""RAG 對話核心：檢索、prompt 組裝、[C{index}] 引用協定（docs/02 D1/D3）。"""
+"""RAG 對話核心：scope 化檢索、prompt 組裝、[C{chunk_id}] 引用協定（docs/02 D1/D3/D6）。
+
+引用標籤使用全域唯一的 chunk id（非 chunk_index）：跨文獻不撞號、
+多輪對話的歷史標籤永遠指涉同一 chunk。
+"""
 
 import re
 from pathlib import Path
@@ -8,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import repo
 
-TOP_K = 8
+TOP_K_DOCUMENT = 8
+TOP_K_MULTI = 12
 HISTORY_LIMIT = 10
 _CITATION_RE = re.compile(r"\[[Cc](\d+)\]")
 _PROMPTS = Path(__file__).parent.parent / "prompts"
@@ -26,46 +31,78 @@ def language_name(code: str | None = None) -> str:
 
 async def retrieve_context(
     session: AsyncSession,
-    doc_id: int,
     query_embedding: list[float],
+    *,
+    scope: str,
+    doc_id: int | None = None,
+    project_id: int | None = None,
     selection_chunk_id: int | None = None,
 ) -> list[dict]:
-    """向量檢索 top-k；有選取時強制加入該 chunk 與前後相鄰（D3）。"""
-    chunks = await repo.similar_chunks(session, doc_id, query_embedding, TOP_K)
-    if selection_chunk_id is not None:
-        sel = next((c for c in chunks if c["id"] == selection_chunk_id), None)
-        sel_index = sel["chunk_index"] if sel else None
-        if sel_index is None:
-            by_id = await repo.chunks_by_ids(session, doc_id, [selection_chunk_id])
-            if by_id:
-                sel_index = by_id[0]["chunk_index"]
-                chunks = by_id + chunks
-        if sel_index is not None:
-            neighbors = await repo.chunks_by_indexes(
-                session, doc_id, [sel_index - 1, sel_index + 1]
-            )
-            chunks = chunks + neighbors
+    """依 scope 檢索（隔離在 SQL 層，見 repo.similar_chunks_scoped）。
+
+    selection 擴充（強制加入選取 chunk 與前後相鄰）僅 document scope 生效。
+    """
+    if scope == "document":
+        chunks = await repo.similar_chunks_scoped(
+            session, query_embedding, TOP_K_DOCUMENT, doc_id=doc_id
+        )
+        if selection_chunk_id is not None and doc_id is not None:
+            sel = next((c for c in chunks if c["id"] == selection_chunk_id), None)
+            sel_index = sel["chunk_index"] if sel else None
+            if sel_index is None:
+                by_id = await repo.chunks_by_ids(session, doc_id, [selection_chunk_id])
+                if by_id:
+                    sel_index = by_id[0]["chunk_index"]
+                    chunks = by_id + chunks
+            if sel_index is not None:
+                neighbors = await repo.chunks_by_indexes(
+                    session, doc_id, [sel_index - 1, sel_index + 1]
+                )
+                chunks = chunks + neighbors
+    elif scope == "project":
+        chunks = await repo.similar_chunks_scoped(
+            session, query_embedding, TOP_K_MULTI, project_id=project_id
+        )
+    else:  # library
+        chunks = await repo.similar_chunks_scoped(session, query_embedding, TOP_K_MULTI)
+
     seen: set[int] = set()
     unique = []
     for c in chunks:
         if c["id"] not in seen:
             seen.add(c["id"])
             unique.append(c)
-    return sorted(unique, key=lambda c: c["chunk_index"])
+    # 同文獻段落相鄰、依原文順序排列
+    return sorted(unique, key=lambda c: (c["document_id"], c["chunk_index"]))
 
 
 def build_messages(
-    doc: dict,
     context_chunks: list[dict],
     history: list[dict],
     question: str,
+    *,
+    scope: str = "document",
+    scope_title: str | None = None,
     selection_text: str | None = None,
     language: str | None = None,
 ) -> list[dict]:
+    """組裝 chat messages。scope_title：document=文獻標題、project=專案名、library=None。"""
     system = load_prompt("chat_system.md").replace("{language}", language_name(language))
-    context_lines = [f"# 文獻：{doc['title']}", "", "# 可引用段落"]
-    for c in context_chunks:
-        context_lines.append(f"[C{c['chunk_index']}] (p.{c['page']}) {c['content']}")
+
+    multi_doc = scope != "document"
+    if multi_doc:
+        titles = sorted({c["document_title"] for c in context_chunks})
+        header = f"# 專案：{scope_title}" if scope == "project" else "# 範圍：全部文獻"
+        sources = "涵蓋文獻：" + "；".join(f"《{t}》" for t in titles)
+        context_lines = [header, sources, "", "# 可引用段落"]
+        for c in context_chunks:
+            context_lines.append(
+                f"[C{c['id']}]（《{c['document_title']}》 p.{c['page']}）{c['content']}"
+            )
+    else:
+        context_lines = [f"# 文獻：{scope_title}", "", "# 可引用段落"]
+        for c in context_chunks:
+            context_lines.append(f"[C{c['id']}] (p.{c['page']}) {c['content']}")
     context_block = "\n".join(context_lines)
 
     messages: list[dict] = [{"role": "system", "content": system + "\n\n" + context_block}]
@@ -80,22 +117,25 @@ def build_messages(
 
 
 def parse_citations(answer: str, context_chunks: list[dict]) -> list[dict]:
-    """把回答中的 [C12] 解析為結構化引用；未知編號忽略（prompt 違規容錯）。"""
-    by_index = {c["chunk_index"]: c for c in context_chunks}
+    """把回答中的 [C{id}] 解析為結構化引用；未知編號忽略（prompt 違規容錯）。"""
+    by_id = {c["id"]: c for c in context_chunks}
     citations = []
     seen: set[int] = set()
     for m in _CITATION_RE.finditer(answer):
-        idx = int(m.group(1))
-        if idx in seen or idx not in by_index:
+        label = int(m.group(1))
+        if label in seen or label not in by_id:
             continue
-        seen.add(idx)
-        c = by_index[idx]
+        seen.add(label)
+        c = by_id[label]
         citations.append(
             {
-                "chunk_index": idx,
+                "label": label,
                 "chunk_id": c["id"],
+                "chunk_index": c["chunk_index"],
                 "page": c["page"],
                 "bbox_list": c["bbox_list"],
+                "document_id": c["document_id"],
+                "document_title": c["document_title"],
             }
         )
     return citations

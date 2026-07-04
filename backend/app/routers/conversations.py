@@ -31,22 +31,38 @@ class MessageCreate(BaseModel):
 
 
 @router.get("/documents/{doc_id}/conversations")
-async def list_conversations(doc_id: int) -> list[dict]:
+async def list_document_conversations(doc_id: int) -> list[dict]:
     async with SessionLocal() as session:
         if await repo.get_document(session, doc_id) is None:
             raise NotFoundError("document", doc_id)
-        return await repo.list_conversations(session, doc_id)
+        return await repo.list_conversations_scoped(
+            session, scope="document", document_id=doc_id
+        )
 
 
 @router.post("/documents/{doc_id}/conversations", status_code=201)
-async def create_conversation(doc_id: int, body: ConversationCreate) -> dict:
+async def create_document_conversation(doc_id: int, body: ConversationCreate) -> dict:
     async with SessionLocal() as session:
         doc = await repo.get_document(session, doc_id)
         if doc is None:
             raise NotFoundError("document", doc_id)
         if doc["status"] != "ready":
             raise AppError("not_ready", "文獻尚未處理完成")
-        return await repo.create_conversation(session, doc_id, body.title)
+        return await repo.create_conversation(
+            session, scope="document", title=body.title, document_id=doc_id
+        )
+
+
+@router.get("/library/conversations")
+async def list_library_conversations() -> list[dict]:
+    async with SessionLocal() as session:
+        return await repo.list_conversations_scoped(session, scope="library")
+
+
+@router.post("/library/conversations", status_code=201)
+async def create_library_conversation(body: ConversationCreate) -> dict:
+    async with SessionLocal() as session:
+        return await repo.create_conversation(session, scope="library", title=body.title)
 
 
 @router.get("/conversations/{conv_id}/messages")
@@ -63,14 +79,32 @@ def _sse(event: str, data: dict) -> str:
 
 @router.post("/conversations/{conv_id}/messages")
 async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
-    """RAG 對話（docs/02 D3）。回應為 SSE：token* → citations → done | error。"""
+    """RAG 對話（docs/02 D3/D6）。依 conv.scope 決定檢索範圍。
+
+    SSE：token* → citations → done | error。
+    """
     async with SessionLocal() as session:
         conv = await repo.get_conversation(session, conv_id)
         if conv is None:
             raise NotFoundError("conversation", conv_id)
-        doc = await repo.get_document(session, conv["document_id"])
-        if doc is None:
-            raise NotFoundError("document", conv["document_id"])
+        scope = conv["scope"]
+        if body.selection is not None and scope != "document":
+            raise AppError("selection_not_allowed", "選取提問僅限單篇文獻對話")
+        scope_title: str | None = None
+        doc_id: int | None = None
+        project_id: int | None = None
+        if scope == "document":
+            doc = await repo.get_document(session, conv["document_id"])
+            if doc is None:
+                raise NotFoundError("document", conv["document_id"])
+            scope_title = doc["title"]
+            doc_id = doc["id"]
+        elif scope == "project":
+            project = await repo.get_project(session, conv["project_id"])
+            if project is None:
+                raise NotFoundError("project", conv["project_id"])
+            scope_title = project["name"]
+            project_id = project["id"]
         history = await repo.list_messages(session, conv_id)
 
     async def stream():
@@ -83,15 +117,18 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
                 query_embedding = await embed_query(body.content)
                 context = await rag.retrieve_context(
                     session,
-                    doc["id"],
                     query_embedding,
+                    scope=scope,
+                    doc_id=doc_id,
+                    project_id=project_id,
                     selection_chunk_id=body.selection.chunk_id if body.selection else None,
                 )
             messages = rag.build_messages(
-                doc,
                 context,
                 history,
                 body.content,
+                scope=scope,
+                scope_title=scope_title,
                 selection_text=body.selection.text if body.selection else None,
                 language=body.language,
             )

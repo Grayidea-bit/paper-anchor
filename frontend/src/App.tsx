@@ -13,7 +13,7 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
   const documentId = useReaderStore((s) => s.documentId);
-  const setDocument = useReaderStore((s) => s.setDocument);
+  const openDocument = useReaderStore((s) => s.openDocument);
 
   useEffect(() => {
     getHealth()
@@ -39,7 +39,7 @@ export default function App() {
           </h1>
           {documentId !== null && (
             <>
-              <button className={styles.backBtn} onClick={() => setDocument(null)}>
+              <button className={styles.backBtn} onClick={() => openDocument(null)}>
                 {t.backToLibrary}
               </button>
               <span className={styles.docTitle}>{doc?.title ?? ""}</span>

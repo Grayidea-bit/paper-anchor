@@ -6,11 +6,12 @@ from app.config import get_settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.errors import AppError
-from app.routers import conversations, documents
+from app.routers import conversations, documents, projects
 
 app = FastAPI(title="Paper Anchor", version="0.1.0")
 app.include_router(documents.router)
 app.include_router(conversations.router)
+app.include_router(projects.router)
 
 
 @app.exception_handler(AppError)

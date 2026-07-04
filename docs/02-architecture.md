@@ -75,18 +75,29 @@
 - **v4-flash 是推理模型**：回覆會含思考段（reasoning），M2 chat 實作需分離 `reasoning_content`／過濾 `<think>` 段，只呈現最終答案。
 - **維度上限**：pgvector 的 ivfflat/hnsw 索引上限 2000 維，選 embedding 模型時不得超過。
 
+### D6 專案分類與 scope 化檢索（M5）
+- **單層專案**：文獻屬於 0 或 1 個專案（`documents.project_id` nullable；刪專案 → 文獻回未分類）。
+- **對話三態**：`conversations.scope IN ('document','project','library')`，document_id / project_id 互斥 CHECK；專案刪除時專案對話 CASCADE。
+- **檢索隔離在 SQL 層**：`repo.similar_chunks_scoped()` 依 scope JOIN documents 硬過濾，service 層無法繞過。多文獻檢索以 `ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY 距離) <= 4` 防單篇洗版，全域 top-12（單篇維持 top-8）。
+- **引用標籤改用全域 chunk id**：`[C{chunks.id}]`（三種 scope 統一）。chunk_index 跨文獻撞號；「每請求臨時編號」會讓多輪對話的歷史標籤錯配到新 chunk，否決。citations 結構加 `label`（=標籤數字）、`document_id`、`document_title`；舊訊息（label 缺）由前端以 chunk_index fallback 配對，零資料遷移。
+- **selection 提問僅限 document scope**（其他 scope 回 400）；digest 管線不變（單篇語境無撞號）。
+
 ## 4. 資料模型
 
 ```sql
 users        (id, email, created_at)                    -- MVP 單一預設 user，預留擴充
-documents    (id, user_id, title, filename, file_path, page_count,
-              status, error_msg, digest JSONB, token_usage JSONB, created_at)
+projects     (id, user_id, name, created_at)            -- M5：單層專案
+documents    (id, user_id, project_id NULL→未分類, title, filename, file_path,
+              page_count, status, error_msg, digest JSONB, token_usage JSONB, created_at)
 chunks       (id, document_id, chunk_index, page, section,
               content TEXT, bbox_list JSONB, embedding VECTOR(1024))  -- 維度=EMBED_DIM
-conversations(id, document_id, title, created_at)
+conversations(id, scope('document'|'project'|'library'),
+              document_id NULL, project_id NULL,        -- 互斥 CHECK 對應 scope
+              title, created_at)
 messages     (id, conversation_id, role, content TEXT,
-              citations JSONB,      -- [{chunk_id, page, bbox_list}]
-              selection JSONB,      -- 選取提問時的 {text, chunk_id}
+              citations JSONB,      -- [{label, chunk_id, chunk_index, page, bbox_list,
+                                    --   document_id, document_title}]
+              selection JSONB,      -- 選取提問時的 {text, chunk_id}（僅 document scope）
               token_usage JSONB, created_at)
 ```
 索引：`chunks(document_id)`、`chunks USING ivfflat (embedding vector_cosine_ops)`、`messages(conversation_id)`。
@@ -100,10 +111,17 @@ messages     (id, conversation_id, role, content TEXT,
 | GET | /api/documents/{id} | 詳情（含 status/digest，供輪詢） |
 | GET | /api/documents/{id}/file | 取 PDF 原檔（供 PDF.js 渲染） |
 | DELETE | /api/documents/{id} | 刪除（含 chunks/conversations 級聯） |
-| GET | /api/documents/{id}/conversations | 對話串列表 |
-| POST | /api/documents/{id}/conversations | 建立對話串 |
+| GET | /api/documents/{id}/conversations | 對話串列表（document scope） |
+| POST | /api/documents/{id}/conversations | 建立對話串（document scope） |
+| PATCH | /api/documents/{id} | 指派/移出專案 {project_id: int\|null} |
+| GET | /api/projects | 專案列表（含 document_count） |
+| POST | /api/projects | 建立專案 {name} |
+| PATCH | /api/projects/{id} | 改名 {name} |
+| DELETE | /api/projects/{id} | 刪除（文獻回未分類、專案對話級聯刪除） |
+| GET/POST | /api/projects/{id}/conversations | 專案級對話 |
+| GET/POST | /api/library/conversations | 全庫級對話 |
 | GET | /api/conversations/{id}/messages | 歷史訊息 |
-| POST | /api/conversations/{id}/messages | 送出提問，回應為 SSE 串流 |
+| POST | /api/conversations/{id}/messages | 送出提問，回應為 SSE 串流（依 conv.scope 檢索） |
 
 SSE 事件格式：`event: token`（增量文字）、`event: citation`（結構化引用）、`event: done`（含 token_usage）、`event: error`。
 

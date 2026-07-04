@@ -59,6 +59,15 @@
 - [x] [opus] 全案 code review：4 項當場修正、待辦與安全清單見 `docs/reviews/M4.md`
 - **DoD**：四項 MVP 驗收全過（M2/M3 已驗）；README 快速開始流程完整。⚠️ 首 token 3s 目標對推理模型不適用，已記錄於 README。
 
+### M5 — 專案分類與多層級問答 ✅ 2026-07-04
+- [x] migration 002：projects 表、documents.project_id、conversations 三態 scope（互斥 CHECK，既有資料零遷移）
+- [x] 檢索 scope 化：`similar_chunks_scoped`（SQL 層硬隔離 + window function 防單篇洗版，多篇 top-12/每篇≤4）
+- [x] 引用協定改全域 chunk id `[C{id}]`：跨文獻不撞號；citations 加 label/document_id/document_title；舊訊息以 chunk_index fallback 零遷移相容
+- [x] API：projects CRUD、文獻指派（PATCH）、project/library conversations、send_message 依 scope 分支（selection 僅限 document）
+- [x] 前端：chatContext 與 viewer 解耦、pendingJump 跨文獻跳轉、Library 專案分組（建立/改名/刪除/指派/問答入口）、跨文獻 chip 樣式
+- **驗證**：pytest 21 passed；`eval_citations --scope project` 隔離鐵證 3/3（範圍外文獻零引用）；瀏覽器實測：專案問答比較兩篇論文 → 點跨文獻 chip → viewer 切換 + 第 11 頁高亮 + 對話不中斷。
+- 修正：長距離跳轉改即時捲動（smooth 會被進行中的 canvas 渲染取消）。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

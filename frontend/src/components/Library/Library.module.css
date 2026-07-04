@@ -5,8 +5,143 @@
 }
 
 .uploadBox {
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 40px;
+}
+
+.scopeChatBtn {
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  padding: 13px 24px;
+  background: var(--paper-bright);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.scopeChatBtn:hover {
+  border-color: var(--oxblood);
+  color: var(--oxblood);
+}
+
+.group {
+  margin-bottom: 26px;
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+}
+
+.groupTitle {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.groupCount {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.groupActions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.groupChatBtn {
+  border: 1px solid var(--oxblood);
+  border-radius: 2px;
+  background: none;
+  color: var(--oxblood);
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.groupChatBtn:hover {
+  background: var(--oxblood);
+  color: var(--paper-bright);
+}
+
+.groupIconBtn {
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.groupIconBtn:hover {
+  color: var(--oxblood);
+}
+
+.projectSelect {
+  align-self: center;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--paper-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  padding: 4px 6px;
+  max-width: 130px;
+  cursor: pointer;
+}
+
+.newProjectBtn {
+  border: 1px dashed var(--ink-faint);
+  border-radius: 2px;
+  background: none;
+  color: var(--ink-soft);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 9px 18px;
+  width: 100%;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.newProjectBtn:hover {
+  border-color: var(--oxblood);
+  color: var(--oxblood);
+}
+
+.newProjectForm {
+  width: 100%;
+}
+
+.newProjectInput {
+  width: 100%;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  background: var(--paper-bright);
+  font-family: var(--serif);
+  font-size: 14px;
+  padding: 9px 12px;
+}
+
+.newProjectInput:focus {
+  outline: none;
 }
 
 .uploadBtn {

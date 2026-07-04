@@ -13,6 +13,80 @@ def _row_to_dict(row: Any) -> dict:
     return dict(row._mapping)
 
 
+# ---------- projects ----------
+
+async def create_project(session: AsyncSession, name: str) -> dict:
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO projects (user_id, name) VALUES (:user_id, :name)
+                RETURNING id, name, created_at
+                """
+            ),
+            {"user_id": DEFAULT_USER_ID, "name": name},
+        )
+    ).one()
+    await session.commit()
+    return _row_to_dict(row)
+
+
+async def list_projects(session: AsyncSession) -> list[dict]:
+    rows = await session.execute(
+        text(
+            """
+            SELECT p.id, p.name, p.created_at,
+                   COUNT(d.id) AS document_count
+            FROM projects p
+            LEFT JOIN documents d ON d.project_id = p.id
+            WHERE p.user_id = :user_id
+            GROUP BY p.id ORDER BY p.created_at
+            """
+        ),
+        {"user_id": DEFAULT_USER_ID},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def get_project(session: AsyncSession, project_id: int) -> dict | None:
+    row = (
+        await session.execute(
+            text("SELECT id, name, created_at FROM projects WHERE id = :id AND user_id = :uid"),
+            {"id": project_id, "uid": DEFAULT_USER_ID},
+        )
+    ).one_or_none()
+    return _row_to_dict(row) if row else None
+
+
+async def rename_project(session: AsyncSession, project_id: int, name: str) -> dict | None:
+    row = (
+        await session.execute(
+            text(
+                """
+                UPDATE projects SET name = :name
+                WHERE id = :id AND user_id = :uid
+                RETURNING id, name, created_at
+                """
+            ),
+            {"id": project_id, "name": name, "uid": DEFAULT_USER_ID},
+        )
+    ).one_or_none()
+    await session.commit()
+    return _row_to_dict(row) if row else None
+
+
+async def delete_project(session: AsyncSession, project_id: int) -> bool:
+    """刪除專案；文獻回未分類（FK SET NULL）、專案對話級聯刪除（FK CASCADE）。"""
+    row = (
+        await session.execute(
+            text("DELETE FROM projects WHERE id = :id AND user_id = :uid RETURNING id"),
+            {"id": project_id, "uid": DEFAULT_USER_ID},
+        )
+    ).one_or_none()
+    await session.commit()
+    return row is not None
+
+
 # ---------- documents ----------
 
 async def create_document(session: AsyncSession, filename: str, file_path: str) -> dict:
@@ -36,7 +110,7 @@ async def list_documents(session: AsyncSession) -> list[dict]:
     rows = await session.execute(
         text(
             """
-            SELECT id, title, filename, page_count, status, error_msg, created_at
+            SELECT id, project_id, title, filename, page_count, status, error_msg, created_at
             FROM documents WHERE user_id = :user_id ORDER BY created_at DESC
             """
         ),
@@ -45,12 +119,30 @@ async def list_documents(session: AsyncSession) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+async def set_document_project(
+    session: AsyncSession, doc_id: int, project_id: int | None
+) -> bool:
+    row = (
+        await session.execute(
+            text(
+                """
+                UPDATE documents SET project_id = :pid
+                WHERE id = :id AND user_id = :uid RETURNING id
+                """
+            ),
+            {"id": doc_id, "pid": project_id, "uid": DEFAULT_USER_ID},
+        )
+    ).one_or_none()
+    await session.commit()
+    return row is not None
+
+
 async def get_document(session: AsyncSession, doc_id: int) -> dict | None:
     row = (
         await session.execute(
             text(
                 """
-                SELECT id, title, filename, file_path, page_count, status,
+                SELECT id, project_id, title, filename, file_path, page_count, status,
                        error_msg, digest, created_at
                 FROM documents WHERE id = :id AND user_id = :user_id
                 """
@@ -152,20 +244,63 @@ async def update_document_digest(
     await session.commit()
 
 
-async def similar_chunks(
-    session: AsyncSession, doc_id: int, embedding: list[float], k: int
+async def similar_chunks_scoped(
+    session: AsyncSession,
+    embedding: list[float],
+    k: int,
+    *,
+    doc_id: int | None = None,
+    project_id: int | None = None,
 ) -> list[dict]:
+    """向量檢索，範圍隔離在 SQL 層（docs/02 D6）：
+    doc_id → 單篇；project_id → 該專案全部文獻；皆 None → 全庫。
+    多文獻時每篇最多 4 條（window function 防單篇洗版）。
+    """
+    params: dict = {"emb": json.dumps(embedding), "k": k, "uid": DEFAULT_USER_ID}
+    if doc_id is not None:
+        rows = await session.execute(
+            text(
+                """
+                SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+                       c.content, c.bbox_list, d.title AS document_title
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id AND d.user_id = :uid
+                WHERE c.document_id = :doc_id AND c.embedding IS NOT NULL
+                ORDER BY c.embedding <=> CAST(:emb AS vector)
+                LIMIT :k
+                """
+            ),
+            {**params, "doc_id": doc_id},
+        )
+        return [_row_to_dict(r) for r in rows]
+
+    project_filter = "AND d.project_id = :pid" if project_id is not None else ""
+    if project_id is not None:
+        params["pid"] = project_id
     rows = await session.execute(
         text(
-            """
-            SELECT id, chunk_index, page, section, content, bbox_list
-            FROM chunks
-            WHERE document_id = :doc_id AND embedding IS NOT NULL
-            ORDER BY embedding <=> CAST(:emb AS vector)
+            f"""
+            SELECT id, document_id, chunk_index, page, section,
+                   content, bbox_list, document_title
+            FROM (
+                SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+                       c.content, c.bbox_list, d.title AS document_title,
+                       c.embedding <=> CAST(:emb AS vector) AS dist,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY c.document_id
+                           ORDER BY c.embedding <=> CAST(:emb AS vector)
+                       ) AS rank_in_doc
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                     AND d.user_id = :uid AND d.status = 'ready' {project_filter}
+                WHERE c.embedding IS NOT NULL
+            ) ranked
+            WHERE rank_in_doc <= 4
+            ORDER BY dist
             LIMIT :k
             """
         ),
-        {"doc_id": doc_id, "emb": json.dumps(embedding), "k": k},
+        params,
     )
     return [_row_to_dict(r) for r in rows]
 
@@ -178,10 +313,11 @@ async def chunks_by_indexes(
     rows = await session.execute(
         text(
             """
-            SELECT id, chunk_index, page, section, content, bbox_list
-            FROM chunks
-            WHERE document_id = :doc_id AND chunk_index = ANY(:indexes)
-            ORDER BY chunk_index
+            SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+                   c.content, c.bbox_list, d.title AS document_title
+            FROM chunks c JOIN documents d ON d.id = c.document_id
+            WHERE c.document_id = :doc_id AND c.chunk_index = ANY(:indexes)
+            ORDER BY c.chunk_index
             """
         ),
         {"doc_id": doc_id, "indexes": indexes},
@@ -195,10 +331,11 @@ async def chunks_by_ids(session: AsyncSession, doc_id: int, ids: list[int]) -> l
     rows = await session.execute(
         text(
             """
-            SELECT id, chunk_index, page, section, content, bbox_list
-            FROM chunks
-            WHERE document_id = :doc_id AND id = ANY(:ids)
-            ORDER BY chunk_index
+            SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+                   c.content, c.bbox_list, d.title AS document_title
+            FROM chunks c JOIN documents d ON d.id = c.document_id
+            WHERE c.document_id = :doc_id AND c.id = ANY(:ids)
+            ORDER BY c.chunk_index
             """
         ),
         {"doc_id": doc_id, "ids": ids},
@@ -237,32 +374,49 @@ async def total_token_usage(session: AsyncSession) -> dict:
 
 # ---------- conversations / messages ----------
 
-async def create_conversation(session: AsyncSession, doc_id: int, title: str) -> dict:
+async def create_conversation(
+    session: AsyncSession,
+    *,
+    scope: str,
+    title: str,
+    document_id: int | None = None,
+    project_id: int | None = None,
+) -> dict:
     row = (
         await session.execute(
             text(
                 """
-                INSERT INTO conversations (document_id, title)
-                VALUES (:doc_id, :title)
-                RETURNING id, document_id, title, created_at
+                INSERT INTO conversations (scope, document_id, project_id, title)
+                VALUES (:scope, :doc_id, :pid, :title)
+                RETURNING id, scope, document_id, project_id, title, created_at
                 """
             ),
-            {"doc_id": doc_id, "title": title},
+            {"scope": scope, "doc_id": document_id, "pid": project_id, "title": title},
         )
     ).one()
     await session.commit()
     return _row_to_dict(row)
 
 
-async def list_conversations(session: AsyncSession, doc_id: int) -> list[dict]:
+async def list_conversations_scoped(
+    session: AsyncSession,
+    *,
+    scope: str,
+    document_id: int | None = None,
+    project_id: int | None = None,
+) -> list[dict]:
     rows = await session.execute(
         text(
             """
-            SELECT id, document_id, title, created_at
-            FROM conversations WHERE document_id = :doc_id ORDER BY created_at DESC
+            SELECT id, scope, document_id, project_id, title, created_at
+            FROM conversations
+            WHERE scope = :scope
+              AND (CAST(:doc_id AS bigint) IS NULL OR document_id = :doc_id)
+              AND (CAST(:pid AS bigint) IS NULL OR project_id = :pid)
+            ORDER BY created_at DESC
             """
         ),
-        {"doc_id": doc_id},
+        {"scope": scope, "doc_id": document_id, "pid": project_id},
     )
     return [_row_to_dict(r) for r in rows]
 
@@ -271,7 +425,10 @@ async def get_conversation(session: AsyncSession, conv_id: int) -> dict | None:
     row = (
         await session.execute(
             text(
-                "SELECT id, document_id, title, created_at FROM conversations WHERE id = :id"
+                """
+                SELECT id, scope, document_id, project_id, title, created_at
+                FROM conversations WHERE id = :id
+                """
             ),
             {"id": conv_id},
         )

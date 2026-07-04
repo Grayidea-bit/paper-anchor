@@ -31,6 +31,7 @@ export function PDFPane() {
   const documentId = useReaderStore((s) => s.documentId);
   const highlight = useReaderStore((s) => s.highlight);
   const requestSelectionAsk = useReaderStore((s) => s.requestSelectionAsk);
+  const consumePendingJump = useReaderStore((s) => s.consumePendingJump);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<SelMenu | null>(null);
@@ -49,7 +50,11 @@ export function PDFPane() {
       .getDocument(documentFileUrl(documentId))
       .promise.then((p) => {
         loaded = p;
-        if (!cancelled) setPdf(p);
+        if (!cancelled) {
+          setPdf(p);
+          // 跨文獻引用跳轉：PDF 就緒後套用（目標頁會被強制渲染）
+          consumePendingJump();
+        }
       })
       .catch((e: Error) => !cancelled && setError(e.message));
     return () => {
@@ -277,7 +282,10 @@ function PageCanvas({
       scroller.getBoundingClientRect().top +
       scroller.scrollTop -
       24;
-    requestAnimationFrame(() => scroller.scrollTo({ top, behavior: "smooth" }));
+    // 長距離跳轉（如跨文獻落點）用即時捲動：smooth 動畫會被
+    // 尚在進行的 canvas 渲染取消，落在半路
+    const behavior = Math.abs(top - scroller.scrollTop) > 2500 ? "auto" : "smooth";
+    requestAnimationFrame(() => scroller.scrollTo({ top, behavior }));
     // deps 含 scale：本頁渲染完成（高度就緒）後重新校正捲動位置
   }, [active, highlight, scale]);
 

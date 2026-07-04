@@ -125,6 +125,56 @@
 
 /* ---- 引用 chip：學術上標風 ---- */
 
+.scopeBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 18px;
+  background: var(--ink);
+  flex-shrink: 0;
+}
+
+.scopeLabel {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--paper-bright);
+}
+
+.scopeClose {
+  border: none;
+  background: none;
+  color: var(--paper-bright);
+  opacity: 0.7;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.scopeClose:hover {
+  opacity: 1;
+}
+
+.citeChipCross {
+  display: inline-block;
+  border: 1px solid var(--oxblood);
+  border-radius: 2px;
+  padding: 0 5px;
+  margin: 0 3px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 16px;
+  vertical-align: 2px;
+  background: var(--oxblood-wash);
+  color: var(--oxblood);
+  cursor: pointer;
+  transition: all 0.13s ease;
+}
+
+.citeChipCross:hover {
+  background: var(--oxblood);
+  color: var(--paper-bright);
+}
+
 .citeChip,
 .citeChipInactive {
   display: inline-block;

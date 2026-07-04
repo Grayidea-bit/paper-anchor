@@ -4,16 +4,23 @@ import remarkGfm from "remark-gfm";
 import styles from "./ChatPane.module.css";
 import {
   createConversation,
+  createScopedConversation,
   getDocument,
   listConversations,
   listMessages,
+  listScopedConversations,
   regenerateDigest,
   streamMessage,
   type Citation,
+  type Conversation,
   type Digest,
   type Message,
 } from "../../api/client";
-import { useReaderStore, type SelectionAsk } from "../../stores/readerStore";
+import {
+  useReaderStore,
+  type ChatContext,
+  type SelectionAsk,
+} from "../../stores/readerStore";
 import { useT, useUiStore } from "../../i18n";
 
 type LocalMessage = Omit<Message, "id" | "created_at"> & { pending?: boolean };
@@ -21,11 +28,17 @@ type Attached = { text: string; chunkId: number | null };
 
 const CITATION_SPLIT = /(\[C\d+\])/g;
 
+function contextKey(ctx: ChatContext): string {
+  if (ctx.kind === "document") return `doc-${ctx.documentId}`;
+  if (ctx.kind === "project") return `project-${ctx.projectId}`;
+  return "library";
+}
+
 export function ChatPane() {
   const t = useT();
-  const documentId = useReaderStore((s) => s.documentId);
+  const chatContext = useReaderStore((s) => s.chatContext);
 
-  if (documentId === null) {
+  if (chatContext === null) {
     return (
       <section className={styles.pane} aria-label="對話面板">
         <div className={styles.emptyWrap}>
@@ -34,13 +47,16 @@ export function ChatPane() {
       </section>
     );
   }
-  return <Chat key={documentId} documentId={documentId} />;
+  return <Chat key={contextKey(chatContext)} context={chatContext} />;
 }
 
-function Chat({ documentId }: { documentId: number }) {
+function Chat({ context }: { context: ChatContext }) {
   const t = useT();
   const lang = useUiStore((s) => s.lang);
+  const documentId = useReaderStore((s) => s.documentId);
   const jumpTo = useReaderStore((s) => s.jumpTo);
+  const jumpToDocument = useReaderStore((s) => s.jumpToDocument);
+  const closeScopedChat = useReaderStore((s) => s.closeScopedChat);
   const [digest, setDigest] = useState<Digest | null>(null);
   const [convId, setConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
@@ -52,15 +68,32 @@ function Chat({ documentId }: { documentId: number }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastFailedRef = useRef<{ question: string; selection: Attached | null } | null>(null);
 
+  const isDocument = context.kind === "document";
+
+  // 初始化：對話串（三種 scope）+ 導讀（僅 document）
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const doc = await getDocument(documentId);
+      let convs: Conversation[];
+      if (context.kind === "document") {
+        const doc = await getDocument(context.documentId);
+        if (cancelled) return;
+        setDigest(doc.digest ?? null);
+        convs = await listConversations(context.documentId);
+      } else if (context.kind === "project") {
+        convs = await listScopedConversations("project", context.projectId);
+      } else {
+        convs = await listScopedConversations("library");
+      }
       if (cancelled) return;
-      setDigest(doc.digest ?? null);
-      const convs = await listConversations(documentId);
-      if (cancelled) return;
-      const conv = convs[0] ?? (await createConversation(documentId));
+      const conv =
+        convs[0] ??
+        (context.kind === "document"
+          ? await createConversation(context.documentId)
+          : await createScopedConversation(
+              context.kind,
+              context.kind === "project" ? context.projectId : undefined,
+            ));
       if (cancelled) return;
       setConvId(conv.id);
       const history = await listMessages(conv.id);
@@ -69,17 +102,19 @@ function Chat({ documentId }: { documentId: number }) {
     return () => {
       cancelled = true;
     };
-  }, [documentId]);
+  }, [context]);
 
+  // 導讀還沒好 → 輪詢（僅 document scope）
   useEffect(() => {
-    if (digest) return;
+    if (!isDocument || digest) return;
+    const docId = (context as Extract<ChatContext, { kind: "document" }>).documentId;
     const timer = setInterval(() => {
-      getDocument(documentId)
+      getDocument(docId)
         .then((d) => d.digest && setDigest(d.digest))
         .catch(() => undefined);
     }, 4000);
     return () => clearInterval(timer);
-  }, [digest, documentId]);
+  }, [digest, isDocument, context]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -139,11 +174,25 @@ function Chat({ documentId }: { documentId: number }) {
     await sendQuestion(question, sel);
   }, [input, attached, sendQuestion]);
 
-  // PDF 選取提問：預設動作直接送出，自由提問附掛到輸入區
+  const retry = useCallback(() => {
+    const failed = lastFailedRef.current;
+    if (!failed || streaming) return;
+    lastFailedRef.current = null;
+    setError(null);
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      return last?.role === "user" && last.content === failed.question
+        ? prev.slice(0, -1)
+        : prev;
+    });
+    void sendQuestion(failed.question, failed.selection);
+  }, [streaming, sendQuestion]);
+
+  // PDF 選取提問：僅 document scope 消費
   const selectionAsk = useReaderStore((s) => s.selectionAsk);
   const clearSelectionAsk = useReaderStore((s) => s.clearSelectionAsk);
   useEffect(() => {
-    if (!selectionAsk || convId === null || streaming) return;
+    if (!isDocument || !selectionAsk || convId === null || streaming) return;
     const req: SelectionAsk = selectionAsk;
     clearSelectionAsk();
     const sel = { text: req.text, chunkId: req.chunkId };
@@ -158,42 +207,54 @@ function Chat({ documentId }: { documentId: number }) {
       critique: t.presetCritique,
     }[req.preset];
     void sendQuestion(question, sel);
-  }, [selectionAsk, convId, streaming, clearSelectionAsk, sendQuestion, t]);
-
-  const retry = useCallback(() => {
-    const failed = lastFailedRef.current;
-    if (!failed || streaming) return;
-    lastFailedRef.current = null;
-    setError(null);
-    // 移除失敗殘留的 user 訊息，重送時會重新加入
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      return last?.role === "user" && last.content === failed.question
-        ? prev.slice(0, -1)
-        : prev;
-    });
-    void sendQuestion(failed.question, failed.selection);
-  }, [streaming, sendQuestion]);
+  }, [selectionAsk, convId, streaming, isDocument, clearSelectionAsk, sendQuestion, t]);
 
   const newConversation = useCallback(async () => {
     if (streaming) return;
-    const conv = await createConversation(documentId);
+    const conv =
+      context.kind === "document"
+        ? await createConversation(context.documentId)
+        : await createScopedConversation(
+            context.kind,
+            context.kind === "project" ? context.projectId : undefined,
+          );
     setConvId(conv.id);
     setMessages([]);
-  }, [documentId, streaming]);
+  }, [context, streaming]);
 
   const clickCitation = useCallback(
-    (index: number, citations: Citation[]) => {
-      const c = citations.find((x) => x.chunk_index === index);
-      if (c) jumpTo({ page: c.page, bboxList: c.bbox_list });
+    (label: number, citations: Citation[]) => {
+      const c = citations.find((x) => (x.label ?? x.chunk_index) === label);
+      if (!c) return;
+      if (c.document_id != null && c.document_id !== documentId) {
+        jumpToDocument(c.document_id, { page: c.page, bboxList: c.bbox_list });
+      } else {
+        jumpTo({ page: c.page, bboxList: c.bbox_list });
+      }
     },
-    [jumpTo],
+    [jumpTo, jumpToDocument, documentId],
   );
 
   return (
     <section className={styles.pane} aria-label="對話面板">
+      {!isDocument && (
+        <div className={styles.scopeBar}>
+          <span className={styles.scopeLabel}>
+            {context.kind === "project" ? t.scopeProject(context.name) : t.scopeLibrary}
+          </span>
+          <button className={styles.scopeClose} onClick={closeScopedChat}>
+            ✕
+          </button>
+        </div>
+      )}
       <div className={styles.messages}>
-        <DigestCard digest={digest} documentId={documentId} onCite={clickCitation} />
+        {isDocument && (
+          <DigestCard
+            digest={digest}
+            documentId={(context as Extract<ChatContext, { kind: "document" }>).documentId}
+            onCite={clickCitation}
+          />
+        )}
         {messages.map((m, i) => (
           <div key={i} className={styles.entry}>
             <span className={m.role === "user" ? styles.markerQ : styles.markerA}>
@@ -296,35 +357,42 @@ function Chat({ documentId }: { documentId: number }) {
 interface ContentProps {
   content: string;
   citations: Citation[];
-  onCite: (index: number, citations: Citation[]) => void;
+  onCite: (label: number, citations: Citation[]) => void;
 }
 
 function CiteChip({
-  index,
   label,
+  display,
   citations,
   onCite,
 }: {
-  index: number;
-  label?: string;
+  label: number;
+  display?: string;
   citations: Citation[];
   onCite: ContentProps["onCite"];
 }) {
   const t = useT();
-  const active = citations.some((c) => c.chunk_index === index);
+  const documentId = useReaderStore((s) => s.documentId);
+  const c = citations.find((x) => (x.label ?? x.chunk_index) === label);
+  const crossDoc = c?.document_id != null && c.document_id !== documentId;
+  const title = c
+    ? crossDoc && c.document_title
+      ? `${c.document_title} · p.${c.page}`
+      : t.jumpToPage(c.page)
+    : t.citationPending;
   return (
     <button
-      className={active ? styles.citeChip : styles.citeChipInactive}
-      disabled={!active}
-      title={active ? t.jumpToSource : t.citationPending}
-      onClick={() => onCite(index, citations)}
+      className={c ? (crossDoc ? styles.citeChipCross : styles.citeChip) : styles.citeChipInactive}
+      disabled={!c}
+      title={title}
+      onClick={() => onCite(label, citations)}
     >
-      {label ?? index}
+      {display ?? label}
     </button>
   );
 }
 
-/** assistant 訊息：markdown 渲染；[C12] 先轉成 #cite-12 連結再畫成 chip */
+/** assistant 訊息：markdown 渲染；[C123] 先轉成 #cite-123 連結再畫成 chip */
 function MarkdownWithCitations({ content, citations, onCite }: ContentProps) {
   const prepared = content.replace(/\[[Cc](\d+)\]/g, "[$1](#cite-$1)");
   return (
@@ -336,7 +404,7 @@ function MarkdownWithCitations({ content, citations, onCite }: ContentProps) {
             const m = /^#cite-(\d+)$/.exec(href ?? "");
             if (m) {
               return (
-                <CiteChip index={Number(m[1])} citations={citations} onCite={onCite} />
+                <CiteChip label={Number(m[1])} citations={citations} onCite={onCite} />
               );
             }
             return (
@@ -361,7 +429,7 @@ function PlainWithCitations({ content, citations, onCite }: ContentProps) {
         const m = /^\[C(\d+)\]$/.exec(part);
         if (!m) return <Fragment key={i}>{part}</Fragment>;
         return (
-          <CiteChip key={i} index={Number(m[1])} citations={citations} onCite={onCite} />
+          <CiteChip key={i} label={Number(m[1])} citations={citations} onCite={onCite} />
         );
       })}
     </p>
@@ -375,7 +443,7 @@ function DigestCard({
 }: {
   digest: Digest | null;
   documentId: number;
-  onCite: (index: number, citations: Citation[]) => void;
+  onCite: (label: number, citations: Citation[]) => void;
 }) {
   const t = useT();
   const lang = useUiStore((s) => s.lang);
@@ -423,8 +491,8 @@ function DigestCard({
                 {s.citations.map((c) => (
                   <CiteChip
                     key={c.chunk_index}
-                    index={c.chunk_index}
-                    label={`p.${c.page}`}
+                    label={c.label ?? c.chunk_index}
+                    display={`p.${c.page}`}
                     citations={s.citations}
                     onCite={onCite}
                   />

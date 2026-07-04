@@ -15,6 +15,7 @@ export type DocumentStatus =
 
 export interface Doc {
   id: number;
+  project_id?: number | null;
   title: string;
   filename: string;
   page_count: number;
@@ -27,10 +28,21 @@ export interface Doc {
 export type BBox = [number, number, number, number];
 
 export interface Citation {
+  /** 回答內文的 [C{label}] 數字；舊訊息無此欄（fallback 用 chunk_index） */
+  label?: number;
   chunk_index: number;
   chunk_id: number;
   page: number;
   bbox_list: BBox[];
+  document_id?: number;
+  document_title?: string;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  document_count?: number;
+  created_at: string;
 }
 
 export interface DigestSection {
@@ -133,6 +145,68 @@ export function listConversations(docId: number): Promise<Conversation[]> {
 
 export function createConversation(docId: number, title = "新對話"): Promise<Conversation> {
   return request<Conversation>(`/api/documents/${docId}/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
+// ---- projects ----
+
+export function listProjects(): Promise<Project[]> {
+  return request<Project[]>("/api/projects");
+}
+
+export function createProject(name: string): Promise<Project> {
+  return request<Project>("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function renameProject(id: number, name: string): Promise<Project> {
+  return request<Project>(`/api/projects/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteProject(id: number): Promise<void> {
+  return request<void>(`/api/projects/${id}`, { method: "DELETE" });
+}
+
+export function assignProject(docId: number, projectId: number | null): Promise<Doc> {
+  return request<Doc>(`/api/documents/${docId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId }),
+  });
+}
+
+/** scope 版對話 API：kind=project 需帶 projectId */
+export function listScopedConversations(
+  kind: "project" | "library",
+  projectId?: number,
+): Promise<Conversation[]> {
+  const path =
+    kind === "project"
+      ? `/api/projects/${projectId}/conversations`
+      : "/api/library/conversations";
+  return request<Conversation[]>(path);
+}
+
+export function createScopedConversation(
+  kind: "project" | "library",
+  projectId?: number,
+  title = "新對話",
+): Promise<Conversation> {
+  const path =
+    kind === "project"
+      ? `/api/projects/${projectId}/conversations`
+      : "/api/library/conversations";
+  return request<Conversation>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
