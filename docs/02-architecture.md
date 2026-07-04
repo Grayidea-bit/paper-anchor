@@ -11,8 +11,8 @@
 | 前端 | Vite + React + TypeScript + PDF.js | PDF.js 是唯一成熟的網頁 PDF 渲染方案，支援文字層座標（引用高亮的基礎） |
 | 資料庫 | PostgreSQL 16 + pgvector | 單一 DB 同時存業務資料與向量，省掉獨立向量庫的運維 |
 | PDF 解析 | PyMuPDF (fitz) | 快、可取得每個文字 span 的頁碼與 bbox 座標 |
-| LLM | DeepSeek（OpenAI 相容 API），供應商可抽換 | 沿用既有 llm.py 抽象層模式；chat 與 embedding 分開設定 |
-| Embedding | 供應商 API（預設 DeepSeek/OpenAI 相容），介面抽象 | 不自架模型，降低部署複雜度 |
+| LLM | **NVIDIA NIM**（OpenAI 相容 API），供應商可抽換 | 使用者已有 NIM API key；chat 與 embedding 同一把 key 搞定 |
+| Embedding | NVIDIA NIM retrieval 模型（`llama-3.2-nv-embedqa-1b-v2`，2048 維） | 與 chat 同供應商；介面抽象保留抽換空間 |
 | 部署 | Docker Compose（api + db + web） | 一鍵啟動、環境一致 |
 
 **刻意不用**：LangChain/LlamaIndex（抽象層過重，RAG 流程自己寫 <300 行更可控）、獨立向量資料庫、訊息佇列（MVP 用 FastAPI BackgroundTasks，P1 若解析吃重再換）。
@@ -66,6 +66,12 @@
 - 長文獻（>100 chunks）採 map-reduce：分段摘要 → 合併。
 - 文件狀態機：`uploaded → parsing → embedding → digesting → ready | failed(error_msg)`，前端輪詢 `GET /api/documents/{id}` 顯示進度。
 
+### D5 NVIDIA NIM 供應商注意事項（llm.py 實作時必讀）
+- Chat 與 embedding 都走 `https://integrate.api.nvidia.com/v1`，OpenAI SDK 相容。
+- **Embedding 需帶 `input_type` 參數**（OpenAI SDK 用 `extra_body`）：入庫文件用 `"passage"`，查詢問題用 `"query"`——llm.py 的 embed 介面要區分這兩種模式，用錯會顯著拉低檢索品質。
+- Embedding 批量與單筆長度有上限，llm.py 內做分批與截斷保護。
+- 預設模型：chat `deepseek-ai/deepseek-v3.1`、embed `nvidia/llama-3.2-nv-embedqa-1b-v2`（2048 維，`EMBED_DIM` 需同步 schema 的 VECTOR 維度）。模型名以 .env 為準，程式碼不得寫死。
+
 ## 4. 資料模型
 
 ```sql
@@ -73,7 +79,7 @@ users        (id, email, created_at)                    -- MVP 單一預設 user
 documents    (id, user_id, title, filename, file_path, page_count,
               status, error_msg, digest JSONB, token_usage JSONB, created_at)
 chunks       (id, document_id, chunk_index, page, section,
-              content TEXT, bbox_list JSONB, embedding VECTOR(1536))
+              content TEXT, bbox_list JSONB, embedding VECTOR(2048))  -- 維度=EMBED_DIM
 conversations(id, document_id, title, created_at)
 messages     (id, conversation_id, role, content TEXT,
               citations JSONB,      -- [{chunk_id, page, bbox_list}]

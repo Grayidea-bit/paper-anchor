@@ -9,7 +9,7 @@
 
 ## 技術棧
 
-FastAPI + PostgreSQL(pgvector) + PyMuPDF｜React + TypeScript + PDF.js｜DeepSeek（OpenAI 相容，可抽換）｜Docker Compose
+FastAPI + PostgreSQL(pgvector) + PyMuPDF｜React + TypeScript + PDF.js｜NVIDIA NIM（OpenAI 相容，可抽換）｜Docker Compose
 
 ## 文件導覽
 

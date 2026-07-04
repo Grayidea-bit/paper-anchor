@@ -58,4 +58,5 @@ cd frontend && npm run build  # 型別檢查 + 打包
 ## 目前狀態
 
 - 階段：**規劃完成，尚未開工**。下一步：M0 專案骨架（見 `docs/03-roadmap.md`）。
-- 尚缺外部條件：LLM API key（.env）、驗收用測試論文 5 篇（`docs/fixtures/` 說明）。
+- LLM 供應商：**NVIDIA NIM**（使用者已有 API key，開工時填入 `.env`；注意事項見 `docs/02-architecture.md` D5）。
+- 驗收測試論文：3 篇已就位（`docs/fixtures/`），皆為 arXiv 版面，之後可再補其他版面。
