@@ -51,9 +51,10 @@
 - 前端把 `[C12]` 渲染成可點擊引用 → PDF.js 跳頁 → 依 bbox 疊加高亮層。
 - **驗收**：引用點擊命中率是整合測試的必測項。
 
-### D2 Chunking 策略
-- 以版面結構切分：優先依標題/段落邊界，目標 400–600 tokens，重疊 80 tokens。
-- 保留 `chunk_index` 順序，支援「取前後相鄰 chunk」擴充上下文（選取提問時用）。
+### D2 Chunking 策略（M1 實作後修訂）
+- 以 PyMuPDF 的版面 block 為最小單位聚合，chunk 不跨頁（bbox 高亮以頁為錨），目標 ~1800 字元、上限 2400（≈500 tokens，受 embedding 模型 512 token 上限約束，API 另帶 `truncate:"END"` 保險）。
+- 不做內容重疊：檢索時以「取前後相鄰 chunk」擴充上下文補償（`chunk_index` 連續）。
+- 表格/圖說明歸入所在位置的 block 流；空 block、純空白跳過。
 
 ### D3 RAG 對話流程
 1. 使用者提問（可附帶 selection：選取文字 + 所在 chunk_id）。
@@ -70,7 +71,8 @@
 - Chat 與 embedding 都走 `https://integrate.api.nvidia.com/v1`，OpenAI SDK 相容。
 - **Embedding 需帶 `input_type` 參數**（OpenAI SDK 用 `extra_body`）：入庫文件用 `"passage"`，查詢問題用 `"query"`——llm.py 的 embed 介面要區分這兩種模式，用錯會顯著拉低檢索品質。
 - Embedding 批量與單筆長度有上限，llm.py 內做分批與截斷保護。
-- 預設模型：chat `deepseek-ai/deepseek-v3.1`、embed `nvidia/nv-embedqa-e5-v5`（1024 維，`EMBED_DIM` 需同步 schema 的 VECTOR 維度）。模型名以 .env 為準，程式碼不得寫死。
+- 預設模型：chat `deepseek-ai/deepseek-v4-flash`（NIM 已無 v3 系列；要更高品質換 `deepseek-v4-pro`）、embed `nvidia/nv-embedqa-e5-v5`（1024 維，`EMBED_DIM` 需同步 schema 的 VECTOR 維度）。模型名以 .env 為準，程式碼不得寫死。
+- **v4-flash 是推理模型**：回覆會含思考段（reasoning），M2 chat 實作需分離 `reasoning_content`／過濾 `<think>` 段，只呈現最終答案。
 - **維度上限**：pgvector 的 ivfflat/hnsw 索引上限 2000 維，選 embedding 模型時不得超過。
 
 ## 4. 資料模型

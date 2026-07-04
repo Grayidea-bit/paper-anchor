@@ -22,13 +22,14 @@
 - [x] docker-compose.yaml 三服務一鍵啟動
 - **DoD**：`docker compose up` 後前後端互通、DB migration 可跑。✅ 驗證：healthz db:true、6 張表建立、web :5173 proxy 通、pytest/ruff 過。
 
-### M1 — 上傳與閱讀（引用地基）
-- [ ] [sonnet] POST/GET documents + 檔案儲存 + 狀態機
-- [ ] [opus] ingest pipeline：PyMuPDF 解析 → 結構化 chunking（含 page/bbox）→ embedding 入庫
-- [ ] [sonnet] 前端上傳流程 + 解析進度輪詢
-- [ ] [opus] PDFPane：PDF.js 渲染 + 「跳到指定 page+bbox 並高亮」API（先做假資料驗證）
-- [ ] [haiku] DELETE/列表 endpoint + 前端文獻列表
-- **DoD**：上傳論文 → 左欄可讀；用假引用資料能正確跳頁高亮（D1 地基驗證，過不了就停下重新設計）。
+### M1 — 上傳與閱讀（引用地基）✅ 2026-07-04
+- [x] [sonnet] POST/GET documents + 檔案儲存 + 狀態機
+- [x] [opus] ingest pipeline：PyMuPDF 解析 → 結構化 chunking（含 page/bbox）→ embedding 入庫
+- [x] [sonnet] 前端上傳流程 + 解析進度輪詢
+- [x] [opus] PDFPane：PDF.js 渲染 + 「跳到指定 page+bbox 並高亮」API
+- [x] [haiku] DELETE/列表 endpoint + 前端文獻列表
+- **DoD**：✅ 三篇 fixture 全數 ready（9p/4s、14p/7s，遠低於 30s 目標）；瀏覽器實測隨機 chunk 跳頁高亮兩次，含跨欄 9 區塊案例，定位全部準確。
+- 發現事項：標題抽取需排除 arXiv 直排戳記（已修）；雙行標題僅取首行（可接受，記錄於 fixtures README）。
 
 ### M2 — 對話與導讀
 - [ ] [opus] rag.py：檢索 + prompt 組裝 + `[C12]` 引用協定

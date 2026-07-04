@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # LLM (OpenAI-compatible; NVIDIA NIM by default)
     llm_base_url: str = "https://integrate.api.nvidia.com/v1"
     llm_api_key: str = ""
-    llm_chat_model: str = "deepseek-ai/deepseek-v3.1"
+    llm_chat_model: str = "deepseek-ai/deepseek-v4-flash"
 
     # Embedding — NIM requires input_type ("passage" | "query"), handled in llm.py
     embed_base_url: str = "https://integrate.api.nvidia.com/v1"

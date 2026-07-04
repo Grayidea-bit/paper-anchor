@@ -1,0 +1,110 @@
+.library {
+  width: 100%;
+  max-width: 560px;
+  padding: 32px 24px;
+}
+
+.uploadBox {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.uploadBtn {
+  border: none;
+  border-radius: 10px;
+  padding: 12px 28px;
+  background: #2f5fdd;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.uploadBtn:disabled {
+  background: #c3cbdc;
+  cursor: wait;
+}
+
+.error {
+  margin-top: 10px;
+  color: #c0392b;
+  font-size: 13px;
+}
+
+.list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.item {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.docBtn {
+  flex: 1;
+  text-align: left;
+  border: 1px solid #d6d8de;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.docBtn:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.docBtn:not(:disabled):hover {
+  border-color: #2f5fdd;
+}
+
+.docTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.docMeta {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.badgeReady {
+  color: #1a7f37;
+}
+
+.badgeBusy {
+  color: #b45309;
+}
+
+.badgeFailed {
+  color: #c0392b;
+}
+
+.deleteBtn {
+  border: 1px solid #e2e4e8;
+  border-radius: 10px;
+  background: #fff;
+  color: #9ca3af;
+  width: 36px;
+  cursor: pointer;
+}
+
+.deleteBtn:hover {
+  color: #c0392b;
+  border-color: #c0392b;
+}
+
+.empty {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 14px;
+  padding: 24px 0;
+}

@@ -4,9 +4,9 @@
 
 | 檔案 | arXiv ID | 標題 | 備註 |
 |---|---|---|---|
-| 2410.11591v1.pdf | 2410.11591 | （M1 解析後回填） | |
-| 2602.23013v3.pdf | 2602.23013 | （M1 解析後回填） | 8.5MB，圖多，測解析效能 |
-| 2606.16119v1.pdf | 2606.16119 | （M1 解析後回填） | |
+| 2410.11591v1.pdf | 2410.11591 | PASTE: Improving the Efficiency of…（雙行標題，僅取首行） | 13 頁 |
+| 2602.23013v3.pdf | 2602.23013 | SubspaceAD: Training-Free Few-Shot Anomaly Detection | 8.5MB / 14 頁，圖多，測解析效能（實測 7s ready） |
+| 2606.16119v1.pdf | 2606.16119 | EdgeZSAD: Practical Zero-Shot Anomaly Detection on Edge Devices | 9 頁（實測 4s ready、29 chunks） |
 
 ## 用途
 
