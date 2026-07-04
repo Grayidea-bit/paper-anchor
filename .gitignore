@@ -1,4 +1,5 @@
 .env
+docs/fixtures/*.pdf
 __pycache__/
 *.pyc
 .venv/
