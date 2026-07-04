@@ -5,6 +5,8 @@
 
 [English README](README.md)
 
+![Paper Anchor 示範——點擊引用，跳回高亮原文](docs/media/demo.gif)
+
 ## 為什麼不是又一個「跟 PDF 聊天」工具？
 
 多數工具給你無法驗證的答案。Paper Anchor 的核心信念是：**無法追溯到原文的回答是負債，不是功能。**

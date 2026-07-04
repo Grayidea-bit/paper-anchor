@@ -5,6 +5,8 @@
 
 [繁體中文說明](README.zh-TW.md)
 
+![Paper Anchor demo — click a citation, jump to the highlighted source](docs/media/demo.gif)
+
 ## Why another "chat with PDF" tool?
 
 Most tools give you answers you can't verify. Paper Anchor is built around one idea: **an answer you can't trace back to the source is a liability, not a feature.**
