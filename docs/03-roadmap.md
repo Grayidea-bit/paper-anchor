@@ -43,11 +43,14 @@
 - 穩定性修正：NIM 會在 SSE stream 內回傳錯誤物件（如 `ResourceExhausted` 限流），先前被靜默吞掉導致空回答入庫——現在偵測並回報 error 事件、空回答不入庫、prompt 過濾空歷史訊息、chat max_tokens 提高到 6144（推理段+答案共用預算）。
 
 ### M3 — 引用連動與選取提問（產品靈魂）
-- [ ] [opus] 引用端到端：LLM 標記 → 後端結構化 → 前端可點擊 → 跳頁高亮
-- [ ] [sonnet] 選取文字浮動選單（解釋/翻譯/質疑/自由提問）→ 帶 selection 提問
-- [ ] [sonnet] 導讀卡要點 → 點擊跳轉原文
+- [x] [opus] 引用端到端：LLM 標記 → 後端結構化 → 前端可點擊 → 跳頁高亮（M2 已完成並實測）
+- [x] [sonnet] 選取文字浮動選單（解釋/翻譯/質疑/自由提問）→ 帶 selection 提問
+      （程式碼完成、tsc 過：PDF.js TextLayer + 浮動選單 + selection 對回 chunk + ChatPane 附掛/預設提問；**瀏覽器驗收待補**，見下）
+- [x] [sonnet] 導讀卡要點 → 點擊跳轉原文（M2 已完成）
 - [ ] [haiku] 整合測試：引用命中率測試集（`docs/fixtures/` 3 篇，每篇 5 問）
 - **DoD**：驗收指標 2 + 引用點擊全數命中。
+- ⚠️ 2026-07-04 驗收中斷：長時間自動化測試後，本機 Chrome 的 pdf.js `render()` 在所有分頁永久卡住（一般 canvas、字型、worker、網路皆驗證正常；今日稍早可正常渲染的版本也一樣卡）——判定為瀏覽器程序層級狀態損壞，需完全重啟 Chrome 後重新驗收 M3 選取流程。
+- 過程修正：PageCanvas cleanup 時 `renderTask.cancel()`（避免雙 render 互撞全滅）；移除 React StrictMode（開發模式 effect 雙跑與 pdf.js canvas 衝突）。
 
 ### M4 — 打磨與交付
 - [ ] [sonnet] 錯誤處理總盤點（掃描版 PDF、解析失敗、LLM 超時、SSE 斷線重連）
