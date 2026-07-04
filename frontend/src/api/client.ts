@@ -224,6 +224,8 @@ export function regenerateDigest(docId: number, language?: string): Promise<{ st
 
 export interface StreamHandlers {
   onToken: (text: string) => void;
+  /** 推理模型的思考摘要（即時顯示用，不入庫） */
+  onReasoning?: (text: string) => void;
   onCitations: (citations: Citation[]) => void;
   onDone: () => void;
   onError: (message: string) => void;
@@ -268,6 +270,7 @@ export async function streamMessage(
     if (!event || !data) return;
     const payload = JSON.parse(data);
     if (event === "token") handlers.onToken(payload.text as string);
+    else if (event === "reasoning") handlers.onReasoning?.(payload.text as string);
     else if (event === "citations") handlers.onCitations(payload.citations as Citation[]);
     else if (event === "done") {
       ended = true;

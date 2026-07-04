@@ -19,11 +19,26 @@ import { useT } from "../../i18n";
 
 const PROCESSING = new Set(["uploaded", "parsing", "embedding", "digesting"]);
 
+/** 專案色點：以 id 決定，穩定不隨排序變 */
+const DOT_COLORS = ["#d97e6b", "#7a8fae", "#6fae7f", "#b98ac9", "#c9a86b", "#8fb3ae"];
+export function projectColor(id: number): string {
+  return DOT_COLORS[id % DOT_COLORS.length];
+}
+
+type Selected = "all" | "unassigned" | number;
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
 export function Library() {
   const t = useT();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [selected, setSelected] = useState<Selected>("all");
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -66,129 +81,170 @@ export function Library() {
     fn().then(refresh).catch((e: Error) => setError(e.message));
   };
 
-  const groups: { project: Project | null; docs: Doc[] }[] = [
-    ...projects.map((p) => ({
-      project: p as Project | null,
-      docs: docs.filter((d) => d.project_id === p.id),
-    })),
-    { project: null, docs: docs.filter((d) => d.project_id == null) },
-  ];
+  const selectedProject =
+    typeof selected === "number" ? projects.find((p) => p.id === selected) ?? null : null;
+  const shownDocs = docs.filter((d) =>
+    selected === "all"
+      ? true
+      : selected === "unassigned"
+        ? d.project_id == null
+        : d.project_id === selected,
+  );
+  const unassignedCount = docs.filter((d) => d.project_id == null).length;
+  const mainTitle =
+    selected === "all"
+      ? t.allDocuments
+      : selected === "unassigned"
+        ? t.unassigned
+        : selectedProject?.name ?? "";
 
   return (
     <div className={styles.library}>
-      <div className={styles.uploadBox}>
-        <button
-          className={styles.uploadBtn}
-          disabled={uploading}
-          onClick={() => fileInput.current?.click()}
-        >
-          {uploading ? t.uploading : t.upload}
-        </button>
-        <button className={styles.scopeChatBtn} onClick={openLibraryChat}>
-          {t.libraryChat}
-        </button>
-        <input
-          ref={fileInput}
-          type="file"
-          accept="application/pdf"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void onUpload(f);
-          }}
-        />
-        {error && <p className={styles.error}>{error}</p>}
-      </div>
-
-      {groups.map(({ project, docs: groupDocs }) => (
-        <section key={project?.id ?? "unassigned"} className={styles.group}>
-          <div className={styles.groupHeader}>
-            <h2 className={styles.groupTitle}>
-              {project ? project.name : t.unassigned}
-              <span className={styles.groupCount}>{groupDocs.length}</span>
-            </h2>
-            {project && (
-              <div className={styles.groupActions}>
-                <button
-                  className={styles.groupChatBtn}
-                  onClick={() => openProjectChat(project.id, project.name)}
-                >
-                  {t.projectChat}
-                </button>
-                <button
-                  className={styles.groupIconBtn}
-                  title={t.renameProject}
-                  onClick={() => {
-                    const name = prompt(t.projectNamePlaceholder, project.name);
-                    if (name?.trim()) act(() => renameProject(project.id, name.trim()));
-                  }}
-                >
-                  ✎
-                </button>
-                <button
-                  className={styles.groupIconBtn}
-                  title={t.deleteProjectTitle}
-                  onClick={() => act(() => deleteProject(project.id))}
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-          </div>
-          <ul className={styles.list}>
-            {groupDocs.map((d) => (
-              <DocRow
-                key={d.id}
-                doc={d}
-                projects={projects}
-                onOpen={() => openDocument(d.id)}
-                onAssign={(pid) => act(() => assignProject(d.id, pid))}
-                onDelete={() => act(() => deleteDocument(d.id))}
-              />
-            ))}
-            {groupDocs.length === 0 && (
-              <p className={styles.empty}>
-                {project ? t.noProjectDocs : t.emptyLibrary}
-              </p>
-            )}
-          </ul>
-        </section>
-      ))}
-
-      {creatingProject ? (
-        <form
-          className={styles.newProjectForm}
-          onSubmit={(e) => {
-            e.preventDefault();
-            const name = newName.trim();
-            if (name) {
-              act(() => createProject(name));
-              setNewName("");
-              setCreatingProject(false);
-            }
-          }}
-        >
+      {/* ---- 側欄 ---- */}
+      <aside className={styles.sidebar}>
+        <div className={styles.uploadWrap}>
+          <button
+            className={styles.uploadBtn}
+            disabled={uploading}
+            onClick={() => fileInput.current?.click()}
+          >
+            {uploading ? t.uploading : `↑ ${t.upload}`}
+          </button>
           <input
-            autoFocus
-            className={styles.newProjectInput}
-            placeholder={t.projectNamePlaceholder}
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onBlur={() => setCreatingProject(false)}
+            ref={fileInput}
+            type="file"
+            accept="application/pdf"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onUpload(f);
+            }}
           />
-        </form>
-      ) : (
-        <button className={styles.newProjectBtn} onClick={() => setCreatingProject(true)}>
-          {t.newProject}
-        </button>
-      )}
+        </div>
+        <nav className={styles.nav}>
+          <button
+            className={selected === "all" ? styles.navItemActive : styles.navItem}
+            onClick={() => setSelected("all")}
+          >
+            {t.allDocuments}
+            <span className={styles.navCount}>{docs.length}</span>
+          </button>
+          <div className={styles.navLabel}>{t.projectsLabel}</div>
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              className={selected === p.id ? styles.navItemActive : styles.navItem}
+              onClick={() => setSelected(p.id)}
+            >
+              <span className={styles.dot} style={{ background: projectColor(p.id) }} />
+              <span className={styles.navName}>{p.name}</span>
+              <span className={styles.navCount}>{p.document_count ?? 0}</span>
+            </button>
+          ))}
+          <button
+            className={selected === "unassigned" ? styles.navItemActive : styles.navItem}
+            onClick={() => setSelected("unassigned")}
+          >
+            <span className={styles.dot} style={{ background: "var(--text-faint)" }} />
+            <span className={styles.navName}>{t.unassigned}</span>
+            <span className={styles.navCount}>{unassignedCount}</span>
+          </button>
+          {creatingProject ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const name = newName.trim();
+                if (name) {
+                  act(() => createProject(name));
+                  setNewName("");
+                  setCreatingProject(false);
+                }
+              }}
+            >
+              <input
+                autoFocus
+                className={styles.newProjectInput}
+                placeholder={t.projectNamePlaceholder}
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onBlur={() => setCreatingProject(false)}
+              />
+            </form>
+          ) : (
+            <button className={styles.newProjectBtn} onClick={() => setCreatingProject(true)}>
+              {t.newProject}
+            </button>
+          )}
+        </nav>
+        {usage && (usage.prompt_tokens > 0 || usage.completion_tokens > 0) && (
+          <div className={styles.usage}>
+            tokens in {fmtTokens(usage.prompt_tokens)}
+            <br />
+            tokens out {fmtTokens(usage.completion_tokens)}
+          </div>
+        )}
+      </aside>
 
-      {usage && (usage.prompt_tokens > 0 || usage.completion_tokens > 0) && (
-        <p className={styles.usage}>
-          {t.totalUsage}：in {usage.prompt_tokens.toLocaleString()} / out{" "}
-          {usage.completion_tokens.toLocaleString()}
-        </p>
-      )}
+      {/* ---- 主區 ---- */}
+      <div className={styles.main}>
+        <div className={styles.mainHeader}>
+          <h2 className={styles.mainTitle}>{mainTitle}</h2>
+          <span className={styles.mainCount}>{t.papers(shownDocs.length)}</span>
+          <span className={styles.spacer} />
+          {selected === "all" && (
+            <button className={styles.qaBtn} onClick={openLibraryChat}>
+              {t.libraryChat}
+            </button>
+          )}
+          {selectedProject && (
+            <>
+              <button
+                className={styles.qaBtn}
+                onClick={() => openProjectChat(selectedProject.id, selectedProject.name)}
+              >
+                {t.projectChat}
+              </button>
+              <button
+                className={styles.textBtn}
+                onClick={() => {
+                  const name = prompt(t.projectNamePlaceholder, selectedProject.name);
+                  if (name?.trim()) act(() => renameProject(selectedProject.id, name.trim()));
+                }}
+              >
+                {t.renameProject}
+              </button>
+              <button
+                className={styles.textBtn}
+                title={t.deleteProjectTitle}
+                onClick={() => {
+                  act(() => deleteProject(selectedProject.id));
+                  setSelected("all");
+                }}
+              >
+                {t.delete}
+              </button>
+            </>
+          )}
+        </div>
+        {error && <p className={styles.error}>{error}</p>}
+        <ul className={styles.list}>
+          {shownDocs.map((d) => (
+            <DocRow
+              key={d.id}
+              doc={d}
+              projects={projects}
+              onOpen={() => openDocument(d.id)}
+              onAssign={(pid) => act(() => assignProject(d.id, pid))}
+              onDelete={() => act(() => deleteDocument(d.id))}
+            />
+          ))}
+          {shownDocs.length === 0 && (
+            <p className={styles.empty}>
+              {typeof selected === "number" ? t.noProjectDocs : t.emptyLibrary}
+            </p>
+          )}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -208,24 +264,20 @@ function DocRow({
 }) {
   const t = useT();
   const statusLabel = t[`status_${doc.status}` as const];
+  const busy = PROCESSING.has(doc.status);
   return (
-    <li className={styles.item}>
-      <button className={styles.docBtn} disabled={doc.status !== "ready"} onClick={onOpen}>
-        <span className={styles.docTitle}>{doc.title || doc.filename}</span>
-        <span className={styles.docMeta}>
-          {doc.page_count > 0 && (
-            <span className={styles.metaPages}>
-              {doc.page_count} {t.pages}
-            </span>
-          )}
-          <span className={styles.badge} data-status={doc.status}>
-            {statusLabel}
-          </span>
-          {doc.status === "failed" && doc.error_msg && (
-            <span className={styles.errNote}>{doc.error_msg}</span>
-          )}
+    <li className={styles.row}>
+      <button className={styles.rowMain} disabled={doc.status !== "ready"} onClick={onOpen}>
+        <span className={styles.rowTitle}>{doc.title || doc.filename}</span>
+        <span className={styles.rowMeta}>
+          {doc.page_count > 0 ? `${doc.page_count} ${t.pages}` : doc.filename}
         </span>
       </button>
+      <span className={styles.pill} data-status={doc.status}>
+        {busy && <span className={styles.pillDot} />}
+        {statusLabel}
+        {doc.status === "failed" && doc.error_msg ? ` · ${doc.error_msg.slice(0, 24)}` : ""}
+      </span>
       <select
         className={styles.projectSelect}
         value={doc.project_id ?? ""}

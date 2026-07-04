@@ -7,113 +7,119 @@
 .header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 22px;
-  height: 56px;
-  background: var(--paper);
+  gap: 16px;
+  padding: 0 20px;
+  height: 50px;
+  background: var(--bg-panel);
   border-bottom: 1px solid var(--hairline);
   flex-shrink: 0;
 }
 
-.left {
-  display: flex;
-  align-items: baseline;
-  gap: 18px;
-  min-width: 0;
-}
-
 .wordmark {
-  font-family: var(--serif);
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font: 600 17px var(--serif);
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
   white-space: nowrap;
-  position: relative;
-  padding-bottom: 2px;
 }
 
-.wordmarkRule {
-  position: absolute;
-  left: 0;
-  bottom: -4px;
-  width: 34px;
-  height: 3px;
-  background: var(--oxblood);
+.wordmarkDot {
+  color: var(--accent);
+}
+
+.vRule {
+  width: 1px;
+  height: 18px;
+  background: var(--hairline-strong);
+  flex-shrink: 0;
 }
 
 .backBtn {
-  border: 1px solid var(--hairline);
-  border-radius: 2px;
-  background: var(--paper-bright);
-  padding: 4px 12px;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--ink-soft);
+  border: none;
+  background: none;
+  font: 500 12.5px var(--sans);
+  color: var(--accent);
   cursor: pointer;
-  transition: all 0.15s ease;
+  white-space: nowrap;
+  padding: 0;
+  transition: opacity 0.13s ease;
 }
 
 .backBtn:hover {
-  border-color: var(--oxblood);
-  color: var(--oxblood);
+  opacity: 0.8;
 }
 
 .docTitle {
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 14px;
-  color: var(--ink-soft);
+  font: italic 500 13px var(--serif);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 520px;
 }
 
-.right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+.spacer {
+  flex: 1;
+}
+
+.themeBtn {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  transition: color 0.13s ease;
+}
+
+.themeBtn:hover {
+  color: var(--text-strong);
 }
 
 .langSwitch {
   display: flex;
-  border: 1px solid var(--ink);
-  border-radius: 2px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
   overflow: hidden;
 }
 
 .langBtn,
 .langActive {
   border: none;
-  background: var(--paper);
-  font-family: var(--mono);
-  font-size: 12px;
-  padding: 5px 14px;
+  background: none;
+  font: 500 11px var(--mono);
+  padding: 4px 9px;
   cursor: pointer;
-  color: var(--ink-soft);
-  transition: all 0.15s ease;
+  color: var(--text-muted);
+  transition: all 0.13s ease;
 }
 
 .langActive {
-  background: var(--ink);
-  color: var(--paper-bright);
+  background: var(--text-primary);
+  color: var(--bg-app);
 }
 
 .langBtn:hover {
-  color: var(--ink);
+  color: var(--text-strong);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 400 10.5px var(--mono);
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .statusDot {
-  width: 9px;
-  height: 9px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #b3402e;
-  box-shadow: 0 0 0 3px rgba(179, 64, 46, 0.15);
+  background: var(--error);
 }
 
 .statusDot[data-ok="true"] {
-  background: #4d7c43;
-  box-shadow: 0 0 0 3px rgba(77, 124, 67, 0.15);
+  background: var(--ok);
 }
 
 .panes {

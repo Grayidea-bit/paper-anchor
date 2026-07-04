@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 export type Lang = "zh-TW" | "en";
+export type Theme = "dark" | "light";
 
 const DICT = {
   "zh-TW": {
@@ -52,6 +53,15 @@ const DICT = {
     scopeLibrary: "範圍：全部文獻",
     scopeProject: (name: string) => `專案：${name}`,
     noProjectDocs: "此專案尚無文獻",
+    allDocuments: "全部文獻",
+    projectsLabel: "專案",
+    connected: "connected",
+    offline: "offline",
+    papers: (n: number) => `${n} 篇`,
+    thinking: (s: number) => `思考中 · ${s}s`,
+    thoughtFor: (s: number) => `已思考 ${s}s`,
+    anchorTag: "錨點",
+    themeToggle: "深/淺色",
   },
   en: {
     appName: "Paper Anchor",
@@ -102,6 +112,15 @@ const DICT = {
     scopeLibrary: "Scope: all papers",
     scopeProject: (name: string) => `Project: ${name}`,
     noProjectDocs: "No papers in this project yet",
+    allDocuments: "All papers",
+    projectsLabel: "PROJECTS",
+    connected: "connected",
+    offline: "offline",
+    papers: (n: number) => `${n} papers`,
+    thinking: (s: number) => `thinking · ${s}s`,
+    thoughtFor: (s: number) => `thought for ${s}s`,
+    anchorTag: "anchor",
+    themeToggle: "Theme",
   },
 } as const;
 
@@ -109,15 +128,23 @@ export type DictKey = keyof (typeof DICT)["zh-TW"];
 
 interface UiState {
   lang: Lang;
+  theme: Theme;
   setLang: (lang: Lang) => void;
+  setTheme: (theme: Theme) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
   lang: (localStorage.getItem("ui_lang") as Lang) || "zh-TW",
+  theme: (localStorage.getItem("ui_theme") as Theme) || "dark",
   setLang: (lang) => {
     localStorage.setItem("ui_lang", lang);
     document.documentElement.lang = lang;
     set({ lang });
+  },
+  setTheme: (theme) => {
+    localStorage.setItem("ui_theme", theme);
+    document.documentElement.dataset.theme = theme;
+    set({ theme });
   },
 }));
 

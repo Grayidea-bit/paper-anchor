@@ -126,39 +126,84 @@ export function PDFPane() {
     [menu, resolveChunkId, requestSelectionAsk],
   );
 
+  // 頁碼膠囊：viewport 中線落在哪一頁
+  const [currentPage, setCurrentPage] = useState(1);
+  const paneRef = useRef<HTMLElement | null>(null);
+  const onScroll = useCallback(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const mid = pane.getBoundingClientRect().top + pane.clientHeight / 2;
+    let best = 1;
+    for (const holder of pane.querySelectorAll<HTMLElement>("[data-page]")) {
+      const r = holder.getBoundingClientRect();
+      if (r.top <= mid) best = Number(holder.dataset.page) || best;
+      else break;
+    }
+    setCurrentPage(best);
+  }, []);
+
   if (documentId === null) {
     return (
-      <section className={styles.pane} aria-label="文獻庫">
-        <div className={styles.centerWrap}>
-          <Library />
-        </div>
+      <section className={styles.paneLibrary} aria-label="文獻庫">
+        <Library />
       </section>
     );
   }
 
+  const numPages = pdf?.numPages ?? 0;
+
   return (
-    <section className={styles.pane} aria-label="文獻閱讀器" onMouseUp={onMouseUp}>
-      {error && <p className={styles.error}>{t.pdfError}{error}</p>}
-      {!pdf && !error && <p className={styles.loading}>{t.pdfLoading}</p>}
-      <div className={styles.pages}>
-        {pdf &&
-          Array.from({ length: pdf.numPages }, (_, i) => i + 1).map((n) => (
-            <PageCanvas key={n} pdf={pdf} pageNumber={n} highlight={highlight} />
-          ))}
-      </div>
-      {menu && (
-        <div
-          className={styles.selMenu}
-          style={{ left: menu.x, top: menu.y }}
-          onMouseUp={(e) => e.stopPropagation()}
-        >
-          <button onClick={() => void onAction("explain")}>{t.selExplain}</button>
-          <button onClick={() => void onAction("translate")}>{t.selTranslate}</button>
-          <button onClick={() => void onAction("critique")}>{t.selCritique}</button>
-          <button onClick={() => void onAction("free")}>{t.selAsk}</button>
+    <div className={styles.paneWrap}>
+      <section
+        className={styles.pane}
+        aria-label="文獻閱讀器"
+        onMouseUp={onMouseUp}
+        onScroll={onScroll}
+        ref={(el) => {
+          paneRef.current = el;
+        }}
+      >
+        {error && <p className={styles.error}>{t.pdfError}{error}</p>}
+        {!pdf && !error && <p className={styles.loading}>{t.pdfLoading}</p>}
+        <div className={styles.pages}>
+          {pdf &&
+            Array.from({ length: numPages }, (_, i) => i + 1).map((n) => (
+              <PageCanvas key={n} pdf={pdf} pageNumber={n} highlight={highlight} />
+            ))}
         </div>
+        {menu && (
+          <div
+            className={styles.selMenu}
+            style={{ left: menu.x, top: menu.y }}
+            onMouseUp={(e) => e.stopPropagation()}
+          >
+            <button onClick={() => void onAction("explain")}>{t.selExplain}</button>
+            <button onClick={() => void onAction("translate")}>{t.selTranslate}</button>
+            <button onClick={() => void onAction("critique")}>{t.selCritique}</button>
+            <button className={styles.selMenuAsk} onClick={() => void onAction("free")}>
+              {t.selAsk}…
+            </button>
+            <span className={styles.selMenuArrow} />
+          </div>
+        )}
+      </section>
+      {pdf && (
+        <span className={styles.pagePill}>
+          p. {currentPage} / {numPages}
+        </span>
       )}
-    </section>
+      {pdf && highlight && numPages > 0 && (
+        <span className={styles.miniTrack}>
+          <span
+            className={styles.miniMark}
+            style={{
+              top: `${((highlight.page - 1) / numPages) * 100}%`,
+              height: `${Math.max(100 / numPages, 3)}%`,
+            }}
+          />
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -174,6 +219,7 @@ function PageCanvas({
   pageNumber: number;
   highlight: HighlightTarget | null;
 }) {
+  const t = useT();
   const holderRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -317,6 +363,17 @@ function PageCanvas({
             }}
           />
         ))}
+      {active && scale !== null && highlight.bboxList[0] && (
+        <span
+          className={styles.anchorTag}
+          style={{
+            left: highlight.bboxList[0][2] * scale - 4,
+            top: Math.max(highlight.bboxList[0][1] * scale - 24, 4),
+          }}
+        >
+          §&nbsp;{t.anchorTag}
+        </span>
+      )}
       <span className={styles.pageNo}>{pageNumber}</span>
     </div>
   );

@@ -68,6 +68,16 @@
 - **驗證**：pytest 21 passed；`eval_citations --scope project` 隔離鐵證 3/3（範圍外文獻零引用）；瀏覽器實測：專案問答比較兩篇論文 → 點跨文獻 chip → viewer 切換 + 第 11 頁高亮 + 對話不中斷。
 - 修正：長距離跳轉改即時捲動（smooth 會被進行中的 canvas 渲染取消）。
 
+### M6 — 「石墨編輯」視覺重設計 ✅ 2026-07-04（Claude Design 交接實作）
+- [x] 設計來源：claude.ai/design 專案（方向 2a），交接包 README + 畫布存於使用者端；規格移植至 `docs/design-brief.md` 流程
+- [x] Design tokens 全面改版：深色 Graphite 為預設 + 淺色靜物編輯對應，`data-theme` 切換（header ☀/☾，localStorage 記憶）
+- [x] 字型：Newsreader 取代 Source Serif 4；陶紅 accent 取代氧化紅；琥珀高亮語意保留
+- [x] 文獻庫改側欄式（240px 導航樹：全部文獻/專案色點/未分類/新專案/token 統計 + 主區列表）
+- [x] 閱讀視圖：桌面底浮起紙頁、底部頁碼膠囊（捲動即時更新）、右緣迷你高亮指示條、高亮 ring+脈衝+「§ 錨點」標籤、浮動選單新樣式（菱形箭頭）
+- [x] 引用 chip 改版：同文獻＝上標式 `p.N`（陶紅點線底）、跨文獻＝填色「標題 · p.N」、解析中＝淡色
+- [x] **思考中卡片**（新功能）：後端把 reasoning_content 以 SSE `reasoning` 事件串流（不入庫）；前端顯示計時「思考中 · Ns」+ 串流推理摘要（固定高度防跳動）；回答開始後收合為「已思考 Ns ▸」可展開
+- 驗證：pytest 21、ruff、tsc 全綠；瀏覽器實測深/淺兩主題、側欄導航、chip 跳轉（頁碼膠囊同步 p.8/9、錨點標籤、指示條）全部符合設計稿。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

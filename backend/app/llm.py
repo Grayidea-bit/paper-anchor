@@ -137,7 +137,9 @@ async def chat_stream(
             async for event in _chat_stream_once(
                 messages, max_tokens=max_tokens, temperature=temperature
             ):
-                yielded = True
+                # reasoning 事件不擋重試（限流常發生在思考早期；client 端會重置）
+                if event["type"] != "reasoning":
+                    yielded = True
                 yield event
             return
         except LLMError as e:
@@ -189,7 +191,9 @@ async def _chat_stream_once(
                 if not choices:
                     continue
                 delta = choices[0].get("delta") or {}
-                # reasoning_content（思考段）不對外輸出
+                # 思考段以獨立事件輸出（前端等待態顯示），不進正文
+                if rtext := delta.get("reasoning_content"):
+                    yield {"type": "reasoning", "text": rtext}
                 if text := delta.get("content"):
                     if cleaned := think.feed(text):
                         yield {"type": "token", "text": cleaned}

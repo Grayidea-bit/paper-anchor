@@ -22,8 +22,15 @@ import {
   type SelectionAsk,
 } from "../../stores/readerStore";
 import { useT, useUiStore } from "../../i18n";
+import { projectColor } from "../Library/Library";
 
-type LocalMessage = Omit<Message, "id" | "created_at"> & { pending?: boolean };
+type LocalMessage = Omit<Message, "id" | "created_at"> & {
+  pending?: boolean;
+  /** 思考摘要（僅本次串流，未持久化） */
+  reasoning?: string;
+  startedAt?: number;
+  thoughtSeconds?: number;
+};
 type Attached = { text: string; chunkId: number | null };
 
 const CITATION_SPLIT = /(\[C\d+\])/g;
@@ -128,10 +135,11 @@ function Chat({ context }: { context: ChatContext }) {
       const sel = selection
         ? { text: selection.text, chunk_id: selection.chunkId }
         : undefined;
+      const startedAt = Date.now();
       setMessages((prev) => [
         ...prev,
         { role: "user", content: question, citations: [], selection: sel },
-        { role: "assistant", content: "", citations: [], pending: true },
+        { role: "assistant", content: "", citations: [], pending: true, startedAt },
       ]);
       const patchLast = (patch: (m: LocalMessage) => LocalMessage) =>
         setMessages((prev) => [...prev.slice(0, -1), patch(prev[prev.length - 1])]);
@@ -140,7 +148,15 @@ function Chat({ context }: { context: ChatContext }) {
           convId,
           question,
           {
-            onToken: (text) => patchLast((m) => ({ ...m, content: m.content + text })),
+            onToken: (text) =>
+              patchLast((m) => ({
+                ...m,
+                content: m.content + text,
+                thoughtSeconds:
+                  m.thoughtSeconds ?? Math.round((Date.now() - startedAt) / 1000),
+              })),
+            onReasoning: (text) =>
+              patchLast((m) => ({ ...m, reasoning: (m.reasoning ?? "") + text })),
             onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
             onDone: () => patchLast((m) => ({ ...m, pending: false })),
             onError: (message) => {
@@ -239,6 +255,12 @@ function Chat({ context }: { context: ChatContext }) {
     <section className={styles.pane} aria-label="對話面板">
       {!isDocument && (
         <div className={styles.scopeBar}>
+          {context.kind === "project" && (
+            <span
+              className={styles.scopeDot}
+              style={{ background: projectColor(context.projectId) }}
+            />
+          )}
           <span className={styles.scopeLabel}>
             {context.kind === "project" ? t.scopeProject(context.name) : t.scopeLibrary}
           </span>
@@ -268,6 +290,9 @@ function Chat({ context }: { context: ChatContext }) {
                     : m.selection.text}
                 </blockquote>
               )}
+              {m.role === "assistant" && m.thoughtSeconds != null && m.reasoning && (
+                <ThoughtToggle seconds={m.thoughtSeconds} reasoning={m.reasoning} />
+              )}
               {m.role === "assistant" ? (
                 <MarkdownWithCitations
                   content={m.content}
@@ -282,11 +307,7 @@ function Chat({ context }: { context: ChatContext }) {
                 />
               )}
               {m.pending && m.content === "" && (
-                <span className={styles.thinking}>
-                  <span />
-                  <span />
-                  <span />
-                </span>
+                <ThinkingCard startedAt={m.startedAt ?? Date.now()} reasoning={m.reasoning} />
               )}
             </div>
           </div>
@@ -344,13 +365,53 @@ function Chat({ context }: { context: ChatContext }) {
         />
         <button
           className={styles.send}
+          title={t.send}
           disabled={streaming || !input.trim() || convId === null}
           onClick={() => void send()}
         >
-          {streaming ? "…" : t.send}
+          {streaming ? "…" : "↑"}
         </button>
       </div>
     </section>
+  );
+}
+
+/** 思考中卡片：計時 + 串流推理摘要（固定高度防跳動） */
+function ThinkingCard({ startedAt, reasoning }: { startedAt: number; reasoning?: string }) {
+  const t = useT();
+  const [seconds, setSeconds] = useState(() =>
+    Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
+  );
+  useEffect(() => {
+    const timer = setInterval(
+      () => setSeconds(Math.max(0, Math.round((Date.now() - startedAt) / 1000))),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  const tail = reasoning ? reasoning.slice(-600) : "";
+  return (
+    <div className={styles.thinkingCard}>
+      <div className={styles.thinkingHead}>
+        <span className={styles.thinkingDot} />
+        <span className={styles.thinkingLabel}>{t.thinking(seconds)}</span>
+      </div>
+      {tail && <p className={styles.reasoningText}>{tail}</p>}
+    </div>
+  );
+}
+
+/** 回答完成後的「已思考 Xs ▸」可展開列 */
+function ThoughtToggle({ seconds, reasoning }: { seconds: number; reasoning: string }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={styles.thoughtWrap}>
+      <button className={styles.thoughtToggle} onClick={() => setOpen(!open)}>
+        {t.thoughtFor(seconds)} {open ? "▾" : "▸"}
+      </button>
+      {open && <p className={styles.reasoningFull}>{reasoning}</p>}
+    </div>
   );
 }
 
@@ -358,6 +419,11 @@ interface ContentProps {
   content: string;
   citations: Citation[];
   onCite: (label: number, citations: Citation[]) => void;
+}
+
+function shortTitle(title: string): string {
+  const cut = title.split(/[:：—–-]/)[0].trim();
+  return cut.length > 18 ? `${cut.slice(0, 18)}…` : cut;
 }
 
 function CiteChip({
@@ -380,6 +446,12 @@ function CiteChip({
       ? `${c.document_title} · p.${c.page}`
       : t.jumpToPage(c.page)
     : t.citationPending;
+  // 同文獻＝上標式 p.N；跨文獻＝填色「標題 · p.N」；解析中＝原始標籤淡色
+  const text = c
+    ? crossDoc
+      ? `${c.document_title ? shortTitle(c.document_title) : "?"} · p.${c.page}`
+      : display ?? `p.${c.page}`
+    : display ?? String(label);
   return (
     <button
       className={c ? (crossDoc ? styles.citeChipCross : styles.citeChip) : styles.citeChipInactive}
@@ -387,7 +459,7 @@ function CiteChip({
       title={title}
       onClick={() => onCite(label, citations)}
     >
-      {display ?? label}
+      {text}
     </button>
   );
 }

@@ -4,23 +4,97 @@
   padding: 0;
 }
 
-:root {
-  /* 書齋紙墨色票 */
-  --paper: #f6f1e7;
-  --paper-deep: #ece4d2;
-  --paper-bright: #fdfbf5;
-  --ink: #221d14;
-  --ink-soft: #6f6552;
-  --ink-faint: #a99e87;
-  --oxblood: #8c2f24;
-  --oxblood-deep: #6e2018;
-  --oxblood-wash: #f3e3dc;
-  --amber: #e8b931;
-  --amber-wash: rgba(232, 185, 49, 0.38);
-  --hairline: #d9cdb4;
-  --shadow-page: 0 2px 14px rgba(60, 48, 24, 0.18);
+/* ============================================================
+   Design tokens — 「石墨編輯 Graphite Editorial」(docs/design-brief.md 交付)
+   深色為預設主題；淺色 = 靜物編輯對應值
+   ============================================================ */
 
-  --serif: "Source Serif 4", "Noto Serif TC", "Songti TC", serif;
+:root,
+:root[data-theme="dark"] {
+  /* surfaces */
+  --bg-app: #191a1d;
+  --bg-panel: #1e1f23;
+  --bg-raised: #24252a;
+  --bg-desk: #131417;
+  --bg-sidebar: #1b1c20;
+  --paper: #f4f1e8;
+
+  /* text */
+  --text-strong: #f0eee7;
+  --text-body: #cfccc2;
+  --text-primary: #ecebe5;
+  --text-muted: #9b988f;
+  --text-faint: #75726a;
+
+  /* lines */
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+  --divider-msg: rgba(255, 255, 255, 0.07);
+  --hover-row: rgba(255, 255, 255, 0.03);
+
+  /* accent — 陶紅 */
+  --accent: #d97e6b;
+  --accent-dim: rgba(217, 126, 107, 0.5);
+  --accent-wash: rgba(217, 126, 107, 0.13);
+  --on-accent: #191a1d;
+
+  /* amber — 高亮語意（與 PDF 選取一致，不可移作他用） */
+  --highlight: #e0b64a;
+  --highlight-border: #d9a92e;
+  --highlight-fill: rgba(224, 182, 74, 0.26);
+  --highlight-ring: rgba(224, 182, 74, 0.13);
+  --highlight-selection: rgba(224, 182, 74, 0.55);
+
+  /* status */
+  --ok: #6fae7f;
+  --busy: #e0b64a;
+  --error: #d47a6a;
+
+  /* shadows */
+  --shadow-page: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 20px 50px rgba(0, 0, 0, 0.55);
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="light"] {
+  --bg-app: #f7f6f2;
+  --bg-panel: #fbfaf7;
+  --bg-raised: #f7f6f2;
+  --bg-desk: #edebe4;
+  --bg-sidebar: #f2f0ea;
+  --paper: #fffefb;
+
+  --text-strong: #1c1b18;
+  --text-body: #33312c;
+  --text-primary: #1c1b18;
+  --text-muted: #6f6b62;
+  --text-faint: #a8a49a;
+
+  --hairline: rgba(28, 27, 24, 0.1);
+  --hairline-strong: rgba(28, 27, 24, 0.16);
+  --divider-msg: rgba(28, 27, 24, 0.08);
+  --hover-row: rgba(28, 27, 24, 0.03);
+
+  --accent: #8c3126;
+  --accent-dim: rgba(140, 49, 38, 0.5);
+  --accent-wash: rgba(140, 49, 38, 0.08);
+  --on-accent: #f7f6f2;
+
+  --highlight: #d9a92e;
+  --highlight-border: #d9a92e;
+  --highlight-fill: rgba(233, 185, 73, 0.22);
+  --highlight-ring: rgba(233, 185, 73, 0.12);
+  --highlight-selection: rgba(233, 185, 73, 0.5);
+
+  --ok: #3d7a4f;
+  --busy: #9a6b1f;
+  --error: #8c3126;
+
+  --shadow-page: 0 1px 2px rgba(28, 27, 24, 0.08), 0 8px 28px rgba(28, 27, 24, 0.1);
+  --shadow-float: 0 6px 20px rgba(28, 27, 24, 0.3);
+}
+
+:root {
+  --serif: "Newsreader", "Noto Serif TC", "Songti TC", serif;
   --sans: "Noto Sans TC", "Segoe UI", system-ui, sans-serif;
   --mono: "IBM Plex Mono", "Consolas", monospace;
 }
@@ -33,34 +107,44 @@ body,
 
 body {
   font-family: var(--sans);
-  color: var(--ink);
-  background: var(--paper);
+  color: var(--text-primary);
+  background: var(--bg-app);
   min-width: 1280px;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: var(--amber-wash);
+  background: var(--highlight-selection);
 }
 
-/* 細膩捲軸，配合紙色 */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--ink-faint);
+  background: var(--text-faint);
   border: 3px solid transparent;
   border-radius: 6px;
   background-clip: content-box;
+  opacity: 0.5;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--ink-soft);
+  background-color: var(--text-muted);
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+@keyframes pa-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }

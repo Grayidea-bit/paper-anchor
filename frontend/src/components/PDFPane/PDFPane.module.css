@@ -1,32 +1,36 @@
-.pane {
+.paneWrap {
   flex: 1 1 58%;
   min-width: 0;
-  overflow-y: auto;
-  background:
-    radial-gradient(ellipse at 30% 0%, rgba(255, 252, 244, 0.55), transparent 60%),
-    var(--paper-deep);
-  border-right: 1px solid var(--hairline);
+  position: relative;
+  display: flex;
 }
 
-.centerWrap {
-  height: 100%;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
+.pane {
+  flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  background: var(--bg-desk);
+}
+
+.paneLibrary {
+  flex: 1 1 58%;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
 }
 
 .pages {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 22px;
-  padding: 30px 0 60px;
+  gap: 26px;
+  padding: 28px 0 64px;
 }
 
 .page {
   position: relative;
   background: #fff;
+  border-radius: 2px;
   box-shadow: var(--shadow-page);
   animation: settle 0.5s ease both;
 }
@@ -46,31 +50,84 @@
   position: absolute;
   right: -42px;
   top: 6px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-faint);
+  font: 400 11px var(--mono);
+  color: var(--text-faint);
 }
+
+/* ---- 頁碼膠囊（固定底部置中） ---- */
+
+.pagePill {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font: 500 11px var(--mono);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 20px;
+  padding: 5px 14px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* ---- 迷你捲動指示（琥珀段 = 高亮位置） ---- */
+
+.miniTrack {
+  position: absolute;
+  right: 16px;
+  top: 28px;
+  bottom: 28px;
+  width: 4px;
+  border-radius: 4px;
+  background: var(--hairline);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.miniMark {
+  position: absolute;
+  width: 100%;
+  border-radius: 4px;
+  background: var(--highlight-selection);
+}
+
+/* ---- 高亮（引用落點） ---- */
 
 .highlight {
   position: absolute;
-  background: var(--amber-wash);
-  border: 1.5px solid rgba(200, 152, 12, 0.85);
-  border-radius: 2px;
+  background: var(--highlight-fill);
+  border: 1.5px solid var(--highlight-border);
+  border-radius: 3px;
+  box-shadow: 0 0 0 5px var(--highlight-ring);
   pointer-events: none;
-  animation: pulse 1.2s ease-in-out 2;
+  animation: pulse 0.6s ease-out 2;
 }
 
 @keyframes pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(200, 152, 12, 0.5);
+  0% {
+    box-shadow: 0 0 0 0 var(--highlight-ring);
   }
-  50% {
-    box-shadow: 0 0 0 8px rgba(200, 152, 12, 0);
+  100% {
+    box-shadow: 0 0 0 5px var(--highlight-ring);
   }
 }
 
-/* ---- 文字層（PDF.js TextLayer）---- */
+.anchorTag {
+  position: absolute;
+  font: 500 10px var(--mono);
+  color: var(--highlight);
+  background: var(--bg-panel);
+  border: 1px solid color-mix(in srgb, var(--highlight) 35%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  transform: translateX(-100%);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ---- 文字層（PDF.js TextLayer） ---- */
 
 .textLayer {
   position: absolute;
@@ -90,7 +147,7 @@
 }
 
 .textLayer ::selection {
-  background: rgba(232, 185, 49, 0.45);
+  background: var(--highlight-selection);
 }
 
 /* ---- 選取浮動選單 ---- */
@@ -99,11 +156,14 @@
   position: fixed;
   transform: translateX(-50%);
   display: flex;
-  background: var(--ink);
-  border-radius: 3px;
-  box-shadow: 0 4px 18px rgba(20, 15, 5, 0.35);
+  gap: 2px;
+  background: var(--bg-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: var(--shadow-float);
   z-index: 40;
-  animation: menuIn 0.14s ease;
+  animation: menuIn 0.12s ease;
 }
 
 @keyframes menuIn {
@@ -120,34 +180,43 @@
 .selMenu button {
   border: none;
   background: none;
-  color: var(--paper-bright);
-  font-family: var(--sans);
-  font-size: 13px;
-  padding: 9px 15px;
+  color: var(--text-primary);
+  font: 500 12px var(--sans);
+  padding: 5px 12px;
+  border-radius: 5px;
   cursor: pointer;
   white-space: nowrap;
-  border-right: 1px solid rgba(255, 252, 244, 0.14);
   transition: background 0.12s ease;
 }
 
-.selMenu button:last-child {
-  border-right: none;
+.selMenu button:hover {
+  background: var(--hover-row);
 }
 
-.selMenu button:hover {
-  background: var(--oxblood);
+.selMenuAsk {
+  color: var(--highlight) !important;
+}
+
+.selMenuArrow {
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--hairline-strong);
+  border-bottom: 1px solid var(--hairline-strong);
+  transform: translateX(-50%) rotate(45deg);
 }
 
 .loading,
 .error {
   text-align: center;
   padding: 22px;
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: 14px;
-  color: var(--ink-soft);
+  font: italic 400 14px var(--serif);
+  color: var(--text-muted);
 }
 
 .error {
-  color: var(--oxblood);
+  color: var(--error);
 }

@@ -138,6 +138,9 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
                 if event["type"] == "token":
                     parts.append(event["text"])
                     yield _sse("token", {"text": event["text"]})
+                elif event["type"] == "reasoning":
+                    # 思考摘要只供即時顯示，不入庫
+                    yield _sse("reasoning", {"text": event["text"]})
                 elif event["type"] == "usage":
                     usage = {
                         "prompt_tokens": event["prompt_tokens"],
