@@ -139,6 +139,28 @@ body {
   background: transparent;
 }
 
+/* ---- 主題切換漸變 ---- */
+
+/* View Transitions（Chrome）：整頁交叉淡化 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.4s;
+  animation-timing-function: ease;
+}
+
+/* Fallback：切換瞬間掛上此 class，讓所有顏色屬性漸變 */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition:
+    background-color 0.4s ease,
+    color 0.4s ease,
+    border-color 0.4s ease,
+    box-shadow 0.4s ease,
+    fill 0.4s ease !important;
+}
+
 @keyframes pa-pulse {
   0%,
   100% {

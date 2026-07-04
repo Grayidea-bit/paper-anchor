@@ -143,7 +143,22 @@ export const useUiStore = create<UiState>((set) => ({
   },
   setTheme: (theme) => {
     localStorage.setItem("ui_theme", theme);
-    document.documentElement.dataset.theme = theme;
+    const apply = () => {
+      document.documentElement.dataset.theme = theme;
+    };
+    // 主題漸變：優先用 View Transitions（整頁交叉淡化，含 canvas）；
+    // 不支援時退回全域 CSS transition
+    const doc = document as Document & {
+      startViewTransition?: (cb: () => void) => unknown;
+    };
+    if (doc.startViewTransition) {
+      doc.startViewTransition(apply);
+    } else {
+      const root = document.documentElement;
+      root.classList.add("theme-transition");
+      apply();
+      window.setTimeout(() => root.classList.remove("theme-transition"), 450);
+    }
     set({ theme });
   },
 }));
