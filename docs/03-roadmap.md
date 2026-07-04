@@ -39,6 +39,7 @@
 - **DoD**：✅ 指標 1（導讀卡五節全有引用、chips 可點跳轉；導讀改為 ready 後非同步補上，不擋閱讀）；指標 3（實測「訓練成本/雲端供應商」問題，回答「文獻中未提及」並附最接近段落）；指標 4（curl 建立的對話重開瀏覽器後完整重現）。瀏覽器實測：提問→串流回答→點引用 chip→跳第 7 頁高亮 Table 8，數字與回答吻合。
 - 發現事項（留給 M4）：(a) ~~markdown 未渲染~~ 已修（react-markdown + 引用 chip 保留）；(b) 整份 PDF 一次渲染 9+ 張 canvas，CDP 截圖變慢、低階機器可能吃力 → 考慮頁面虛擬化；(c) ThinkFilter 與引用解析已有單元測試守護。
 - 使用者回饋修正（2026-07-04）：markdown 渲染 ✅；回答語言中英切換 ✅（per-request `language` 參數 + UI 選單，localStorage 記憶；導讀重生成也支援 `?language=`）。
+- UI/UX 重設計（2026-07-04，使用者要求）：書齋編輯風（紙/墨/氧化紅、Source Serif 4 + Noto Serif TC + IBM Plex Mono）、對話改訪談式 Q/A 版面、導讀卡期刊摘要風；i18n 升級為全系統 zh-TW/en（`src/i18n.ts`，頂欄段落式切換，介面文字+回答語言+導讀語言一體）。修正：引用跳轉的 smooth scrollIntoView 會被同幀 DOM 變更取消 → 改為對捲動容器顯式 scrollTo，並在頁面渲染完成後重新校正。
 - 穩定性修正：NIM 會在 SSE stream 內回傳錯誤物件（如 `ResourceExhausted` 限流），先前被靜默吞掉導致空回答入庫——現在偵測並回報 error 事件、空回答不入庫、prompt 過濾空歷史訊息、chat max_tokens 提高到 6144（推理段+答案共用預算）。
 
 ### M3 — 引用連動與選取提問（產品靈魂）
