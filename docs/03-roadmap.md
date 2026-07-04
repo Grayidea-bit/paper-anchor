@@ -45,12 +45,12 @@
 ### M3 — 引用連動與選取提問（產品靈魂）
 - [x] [opus] 引用端到端：LLM 標記 → 後端結構化 → 前端可點擊 → 跳頁高亮（M2 已完成並實測）
 - [x] [sonnet] 選取文字浮動選單（解釋/翻譯/質疑/自由提問）→ 帶 selection 提問
-      （程式碼完成、tsc 過：PDF.js TextLayer + 浮動選單 + selection 對回 chunk + ChatPane 附掛/預設提問；**瀏覽器驗收待補**，見下）
+      （瀏覽器實測通過：圈選→選單→解釋→回答精準針對選取段落並附引用）
 - [x] [sonnet] 導讀卡要點 → 點擊跳轉原文（M2 已完成）
-- [ ] [haiku] 整合測試：引用命中率測試集（`docs/fixtures/` 3 篇，每篇 5 問）
-- **DoD**：驗收指標 2 + 引用點擊全數命中。
-- ⚠️ 2026-07-04 驗收中斷：長時間自動化測試後，本機 Chrome 的 pdf.js `render()` 在所有分頁永久卡住（一般 canvas、字型、worker、網路皆驗證正常；今日稍早可正常渲染的版本也一樣卡）——判定為瀏覽器程序層級狀態損壞，需完全重啟 Chrome 後重新驗收 M3 選取流程。
-- 過程修正：PageCanvas cleanup 時 `renderTask.cancel()`（避免雙 render 互撞全滅）；移除 React StrictMode（開發模式 effect 雙跑與 pdf.js canvas 衝突）。
+- [x] [haiku] 整合測試：引用命中率測試集（`scripts/eval_citations.py`，3 篇 × 5 問）
+- **DoD**：✅ 全部達成（2026-07-04）。評測 **15/15 通過**（每題皆有結構化引用、頁碼有效、錨點可高亮）。首輪 11/15 的 4 個失敗全為 NIM 限流，加入退避重試後滿分。
+- 過程修正：PageCanvas cleanup 時 `renderTask.cancel()`；移除 React StrictMode（與 pdf.js canvas 衝突）；llm.py 三出口加限流重試。
+- 重要經驗：pdf.js render 依賴 requestAnimationFrame，**分頁不可見時 rAF 停發、渲染暫停**（分頁恢復可見會自動續跑）——自動化測試時務必保持視窗前景，一度被誤判為「渲染卡死」。
 
 ### M4 — 打磨與交付
 - [ ] [sonnet] 錯誤處理總盤點（掃描版 PDF、解析失敗、LLM 超時、SSE 斷線重連）
