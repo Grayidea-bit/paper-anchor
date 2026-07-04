@@ -4,6 +4,27 @@
   padding: 0;
 }
 
+:root {
+  /* 書齋紙墨色票 */
+  --paper: #f6f1e7;
+  --paper-deep: #ece4d2;
+  --paper-bright: #fdfbf5;
+  --ink: #221d14;
+  --ink-soft: #6f6552;
+  --ink-faint: #a99e87;
+  --oxblood: #8c2f24;
+  --oxblood-deep: #6e2018;
+  --oxblood-wash: #f3e3dc;
+  --amber: #e8b931;
+  --amber-wash: rgba(232, 185, 49, 0.38);
+  --hairline: #d9cdb4;
+  --shadow-page: 0 2px 14px rgba(60, 48, 24, 0.18);
+
+  --serif: "Source Serif 4", "Noto Serif TC", "Songti TC", serif;
+  --sans: "Noto Sans TC", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "Consolas", monospace;
+}
+
 html,
 body,
 #root {
@@ -11,8 +32,35 @@ body,
 }
 
 body {
-  font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif;
-  color: #1a1a2e;
-  background: #f4f5f7;
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--paper);
   min-width: 1280px;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--amber-wash);
+}
+
+/* 細膩捲軸，配合紙色 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ink-faint);
+  border: 3px solid transparent;
+  border-radius: 6px;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ink-soft);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }

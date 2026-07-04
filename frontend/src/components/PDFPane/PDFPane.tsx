@@ -6,6 +6,7 @@ import styles from "./PDFPane.module.css";
 import { documentFileUrl } from "../../api/client";
 import { useReaderStore, type HighlightTarget } from "../../stores/readerStore";
 import { Library } from "../Library/Library";
+import { useT } from "../../i18n";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -13,6 +14,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const PAGE_WIDTH = 780;
 
 export function PDFPane() {
+  const t = useT();
   const documentId = useReaderStore((s) => s.documentId);
   const highlight = useReaderStore((s) => s.highlight);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -52,8 +54,8 @@ export function PDFPane() {
 
   return (
     <section className={styles.pane} aria-label="文獻閱讀器">
-      {error && <p className={styles.error}>PDF 載入失敗：{error}</p>}
-      {!pdf && !error && <p className={styles.loading}>載入中…</p>}
+      {error && <p className={styles.error}>{t.pdfError}{error}</p>}
+      {!pdf && !error && <p className={styles.loading}>{t.pdfLoading}</p>}
       <div className={styles.pages}>
         {pdf &&
           Array.from({ length: pdf.numPages }, (_, i) => i + 1).map((n) => (
@@ -110,12 +112,22 @@ function PageCanvas({
     };
   }, [pdf, pageNumber]);
 
-  // 跳頁：引用錨點的前端終點
+  // 跳頁：引用錨點的前端終點。
+  // 不用 scrollIntoView(smooth)：同幀插入高亮 DOM 會讓 Chrome 取消該動畫，
+  // 改成對捲動容器顯式 scrollTo。
   useEffect(() => {
-    if (active) {
-      holderRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, [active, highlight]);
+    const holder = holderRef.current;
+    if (!active || !holder) return;
+    const scroller = holder.closest("section");
+    if (!scroller) return;
+    const top =
+      holder.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop -
+      24;
+    requestAnimationFrame(() => scroller.scrollTo({ top, behavior: "smooth" }));
+    // deps 含 scale：本頁渲染完成（高度就緒）後重新校正捲動位置
+  }, [active, highlight, scale]);
 
   return (
     <div className={styles.page} ref={holderRef}>

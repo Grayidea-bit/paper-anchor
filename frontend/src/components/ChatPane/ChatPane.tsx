@@ -14,19 +14,21 @@ import {
   type Message,
 } from "../../api/client";
 import { useReaderStore } from "../../stores/readerStore";
+import { useT, useUiStore } from "../../i18n";
 
 type LocalMessage = Omit<Message, "id" | "created_at"> & { pending?: boolean };
 
 const CITATION_SPLIT = /(\[C\d+\])/g;
 
 export function ChatPane() {
+  const t = useT();
   const documentId = useReaderStore((s) => s.documentId);
 
   if (documentId === null) {
     return (
       <section className={styles.pane} aria-label="對話面板">
         <div className={styles.emptyWrap}>
-          <p className={styles.hint}>上傳文獻後，可在此與 LLM 討論內容</p>
+          <p className={styles.hint}>{t.chatEmptyHint}</p>
         </div>
       </section>
     );
@@ -35,19 +37,17 @@ export function ChatPane() {
 }
 
 function Chat({ documentId }: { documentId: number }) {
+  const t = useT();
+  const lang = useUiStore((s) => s.lang);
   const jumpTo = useReaderStore((s) => s.jumpTo);
   const [digest, setDigest] = useState<Digest | null>(null);
   const [convId, setConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
-  const [language, setLanguage] = useState(
-    () => localStorage.getItem("answer_lang") ?? "zh-TW",
-  );
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // 初始化：導讀 + 最近對話與歷史（驗收指標 4：重開瀏覽器可續聊）
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -67,7 +67,6 @@ function Chat({ documentId }: { documentId: number }) {
     };
   }, [documentId]);
 
-  // 導讀還沒好 → 輪詢
   useEffect(() => {
     if (digest) return;
     const timer = setInterval(() => {
@@ -105,7 +104,6 @@ function Chat({ documentId }: { documentId: number }) {
           onDone: () => patchLast((m) => ({ ...m, pending: false })),
           onError: (message) => {
             setError(message);
-            // 沒有任何內容的 assistant 泡泡直接移除
             setMessages((prev) => {
               const last = prev[prev.length - 1];
               return last?.role === "assistant" && !last.content
@@ -114,14 +112,14 @@ function Chat({ documentId }: { documentId: number }) {
             });
           },
         },
-        { language },
+        { language: lang },
       );
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setStreaming(false);
     }
-  }, [convId, input, streaming, language]);
+  }, [convId, input, streaming, lang]);
 
   const newConversation = useCallback(async () => {
     if (streaming) return;
@@ -143,24 +141,32 @@ function Chat({ documentId }: { documentId: number }) {
       <div className={styles.messages}>
         <DigestCard digest={digest} documentId={documentId} onCite={clickCitation} />
         {messages.map((m, i) => (
-          <div
-            key={i}
-            className={m.role === "user" ? styles.userMsg : styles.assistantMsg}
-          >
-            {m.role === "assistant" ? (
-              <MarkdownWithCitations
-                content={m.content}
-                citations={m.citations}
-                onCite={clickCitation}
-              />
-            ) : (
-              <PlainWithCitations
-                content={m.content}
-                citations={m.citations}
-                onCite={clickCitation}
-              />
-            )}
-            {m.pending && m.content === "" && <span className={styles.cursor}>▍</span>}
+          <div key={i} className={styles.entry}>
+            <span className={m.role === "user" ? styles.markerQ : styles.markerA}>
+              {m.role === "user" ? "Q" : "A"}
+            </span>
+            <div className={styles.entryBody}>
+              {m.role === "assistant" ? (
+                <MarkdownWithCitations
+                  content={m.content}
+                  citations={m.citations}
+                  onCite={clickCitation}
+                />
+              ) : (
+                <PlainWithCitations
+                  content={m.content}
+                  citations={m.citations}
+                  onCite={clickCitation}
+                />
+              )}
+              {m.pending && m.content === "" && (
+                <span className={styles.thinking}>
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              )}
+            </div>
           </div>
         ))}
         {error && <p className={styles.error}>{error}</p>}
@@ -169,27 +175,15 @@ function Chat({ documentId }: { documentId: number }) {
       <div className={styles.inputRow}>
         <button
           className={styles.newConvBtn}
-          title="開新對話"
+          title={t.newConversation}
           disabled={streaming}
           onClick={() => void newConversation()}
         >
           ＋
         </button>
-        <select
-          className={styles.langSelect}
-          title="回答語言"
-          value={language}
-          onChange={(e) => {
-            setLanguage(e.target.value);
-            localStorage.setItem("answer_lang", e.target.value);
-          }}
-        >
-          <option value="zh-TW">中</option>
-          <option value="en">EN</option>
-        </select>
         <textarea
           className={styles.input}
-          placeholder="就這篇文獻提問…（Enter 送出，Shift+Enter 換行）"
+          placeholder={t.inputPlaceholder}
           rows={2}
           value={input}
           disabled={convId === null}
@@ -206,7 +200,7 @@ function Chat({ documentId }: { documentId: number }) {
           disabled={streaming || !input.trim() || convId === null}
           onClick={() => void send()}
         >
-          {streaming ? "…" : "送出"}
+          {streaming ? "…" : t.send}
         </button>
       </div>
     </section>
@@ -221,22 +215,25 @@ interface ContentProps {
 
 function CiteChip({
   index,
+  label,
   citations,
   onCite,
 }: {
   index: number;
+  label?: string;
   citations: Citation[];
   onCite: ContentProps["onCite"];
 }) {
+  const t = useT();
   const active = citations.some((c) => c.chunk_index === index);
   return (
     <button
       className={active ? styles.citeChip : styles.citeChipInactive}
       disabled={!active}
-      title={active ? "跳到原文" : "引用解析中…"}
+      title={active ? t.jumpToSource : t.citationPending}
       onClick={() => onCite(index, citations)}
     >
-      {index}
+      {label ?? index}
     </button>
   );
 }
@@ -273,7 +270,7 @@ function MarkdownWithCitations({ content, citations, onCite }: ContentProps) {
 /** user 訊息：純文字（保留換行），引用標記仍可點 */
 function PlainWithCitations({ content, citations, onCite }: ContentProps) {
   return (
-    <p className={styles.msgText}>
+    <p className={styles.question}>
       {content.split(CITATION_SPLIT).map((part, i) => {
         const m = /^\[C(\d+)\]$/.exec(part);
         if (!m) return <Fragment key={i}>{part}</Fragment>;
@@ -294,6 +291,8 @@ function DigestCard({
   documentId: number;
   onCite: (index: number, citations: Citation[]) => void;
 }) {
+  const t = useT();
+  const lang = useUiStore((s) => s.lang);
   const [collapsed, setCollapsed] = useState(false);
   const [requested, setRequested] = useState(false);
 
@@ -301,16 +300,16 @@ function DigestCard({
     return (
       <div className={styles.digestCard}>
         <p className={styles.digestPending}>
-          📖 導讀產生中…
+          {t.digestPending}
           {!requested && (
             <button
               className={styles.retryBtn}
               onClick={() => {
                 setRequested(true);
-                void regenerateDigest(documentId).catch(() => setRequested(false));
+                void regenerateDigest(documentId, lang).catch(() => setRequested(false));
               }}
             >
-              重新產生
+              {t.regenerate}
             </button>
           )}
         </p>
@@ -320,25 +319,29 @@ function DigestCard({
   return (
     <div className={styles.digestCard}>
       <button className={styles.digestHeader} onClick={() => setCollapsed(!collapsed)}>
-        📖 導讀 {collapsed ? "▸" : "▾"}
+        <span className={styles.digestLabel}>{t.digest}</span>
+        <span className={styles.digestToggle}>{collapsed ? "＋" : "－"}</span>
       </button>
       {!collapsed && (
         <>
           <p className={styles.digestTldr}>{digest.tldr}</p>
-          {digest.sections.map((s) => (
-            <div key={s.key} className={styles.digestSection}>
+          {digest.sections.map((s, i) => (
+            <div
+              key={s.key}
+              className={styles.digestSection}
+              style={{ animationDelay: `${i * 70}ms` }}
+            >
               <p className={styles.digestTitle}>{s.title}</p>
               <p className={styles.digestText}>
                 {s.text}
                 {s.citations.map((c) => (
-                  <button
+                  <CiteChip
                     key={c.chunk_index}
-                    className={styles.citeChip}
-                    title={`跳到第 ${c.page} 頁`}
-                    onClick={() => onCite(c.chunk_index, s.citations)}
-                  >
-                    p.{c.page}
-                  </button>
+                    index={c.chunk_index}
+                    label={`p.${c.page}`}
+                    citations={s.citations}
+                    onCite={onCite}
+                  />
                 ))}
               </p>
             </div>

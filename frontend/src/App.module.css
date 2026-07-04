@@ -8,52 +8,112 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  height: 52px;
-  background: #ffffff;
-  border-bottom: 1px solid #e2e4e8;
+  padding: 0 22px;
+  height: 56px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
 }
 
 .left {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  align-items: baseline;
+  gap: 18px;
   min-width: 0;
 }
 
-.title {
-  font-size: 17px;
-  font-weight: 600;
+.wordmark {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   white-space: nowrap;
+  position: relative;
+  padding-bottom: 2px;
+}
+
+.wordmarkRule {
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  width: 34px;
+  height: 3px;
+  background: var(--oxblood);
 }
 
 .backBtn {
-  border: 1px solid #d6d8de;
-  border-radius: 8px;
-  background: #fff;
-  padding: 5px 12px;
-  font-size: 13px;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--paper-bright);
+  padding: 4px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
   cursor: pointer;
-  white-space: nowrap;
+  transition: all 0.15s ease;
 }
 
 .backBtn:hover {
-  border-color: #2f5fdd;
-  color: #2f5fdd;
+  border-color: var(--oxblood);
+  color: var(--oxblood);
 }
 
 .docTitle {
-  font-size: 13px;
-  color: #6b7280;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--ink-soft);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 480px;
+  max-width: 520px;
 }
 
-.status {
-  font-size: 13px;
-  color: #6b7280;
+.right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.langSwitch {
+  display: flex;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.langBtn,
+.langActive {
+  border: none;
+  background: var(--paper);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 14px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  transition: all 0.15s ease;
+}
+
+.langActive {
+  background: var(--ink);
+  color: var(--paper-bright);
+}
+
+.langBtn:hover {
+  color: var(--ink);
+}
+
+.statusDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #b3402e;
+  box-shadow: 0 0 0 3px rgba(179, 64, 46, 0.15);
+}
+
+.statusDot[data-ok="true"] {
+  background: #4d7c43;
+  box-shadow: 0 0 0 3px rgba(77, 124, 67, 0.15);
 }
 
 .panes {

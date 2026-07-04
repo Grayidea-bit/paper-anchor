@@ -7,24 +7,19 @@ import {
   type Doc,
 } from "../../api/client";
 import { useReaderStore } from "../../stores/readerStore";
-
-const STATUS_LABEL: Record<Doc["status"], string> = {
-  uploaded: "已上傳",
-  parsing: "解析中…",
-  embedding: "建立索引…",
-  digesting: "產生導讀…",
-  ready: "可閱讀",
-  failed: "失敗",
-};
+import { useT } from "../../i18n";
 
 const PROCESSING = new Set(["uploaded", "parsing", "embedding", "digesting"]);
 
 export function Library() {
+  const t = useT();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const setDocument = useReaderStore((s) => s.setDocument);
+
+  const statusLabel = (s: Doc["status"]) => t[`status_${s}` as const];
 
   const refresh = useCallback(() => {
     listDocuments().then(setDocs).catch((e: Error) => setError(e.message));
@@ -32,7 +27,6 @@ export function Library() {
 
   useEffect(refresh, [refresh]);
 
-  // 有文件在處理中時輪詢
   useEffect(() => {
     if (!docs.some((d) => PROCESSING.has(d.status))) return;
     const timer = setInterval(refresh, 2000);
@@ -70,7 +64,7 @@ export function Library() {
           disabled={uploading}
           onClick={() => fileInput.current?.click()}
         >
-          {uploading ? "上傳中…" : "上傳 PDF 文獻"}
+          {uploading ? t.uploading : t.upload}
         </button>
         <input
           ref={fileInput}
@@ -86,8 +80,8 @@ export function Library() {
       </div>
 
       <ul className={styles.list}>
-        {docs.map((d) => (
-          <li key={d.id} className={styles.item}>
+        {docs.map((d, i) => (
+          <li key={d.id} className={styles.item} style={{ animationDelay: `${i * 60}ms` }}>
             <button
               className={styles.docBtn}
               disabled={d.status !== "ready"}
@@ -95,31 +89,29 @@ export function Library() {
             >
               <span className={styles.docTitle}>{d.title || d.filename}</span>
               <span className={styles.docMeta}>
-                {d.page_count > 0 ? `${d.page_count} 頁 · ` : ""}
-                <span
-                  className={
-                    d.status === "failed"
-                      ? styles.badgeFailed
-                      : d.status === "ready"
-                        ? styles.badgeReady
-                        : styles.badgeBusy
-                  }
-                >
-                  {STATUS_LABEL[d.status]}
+                {d.page_count > 0 && (
+                  <span className={styles.metaPages}>
+                    {d.page_count} {t.pages}
+                  </span>
+                )}
+                <span className={styles.badge} data-status={d.status}>
+                  {statusLabel(d.status)}
                 </span>
-                {d.status === "failed" && d.error_msg ? ` — ${d.error_msg}` : ""}
+                {d.status === "failed" && d.error_msg && (
+                  <span className={styles.errNote}>{d.error_msg}</span>
+                )}
               </span>
             </button>
             <button
               className={styles.deleteBtn}
-              title="刪除"
+              title={t.delete}
               onClick={() => void onDelete(d.id)}
             >
               ✕
             </button>
           </li>
         ))}
-        {docs.length === 0 && <p className={styles.empty}>尚無文獻，先上傳一篇吧</p>}
+        {docs.length === 0 && <p className={styles.empty}>{t.emptyLibrary}</p>}
       </ul>
     </div>
   );
