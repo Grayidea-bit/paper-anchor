@@ -82,10 +82,18 @@
 - **引用標籤改用全域 chunk id**：`[C{chunks.id}]`（三種 scope 統一）。chunk_index 跨文獻撞號；「每請求臨時編號」會讓多輪對話的歷史標籤錯配到新 chunk，否決。citations 結構加 `label`（=標籤數字）、`document_id`、`document_title`；舊訊息（label 缺）由前端以 chunk_index fallback 配對，零資料遷移。
 - **selection 提問僅限 document scope**（其他 scope 回 400）；digest 管線不變（單篇語境無撞號）。
 
+### D7 Agent 環境與工具（M7，Pydantic AI）
+- **對話管線建在 Pydantic AI 上**（`services/agent.py`）：模型每請求以 `llm._chat_config()`（settings 覆蓋 .env）建構 `OpenAIChatModel`；框架事件映射為本專案事件協定（token/reasoning/tool/context_chunks/usage）。llm.py 保留 embeddings（NIM input_type 特規）、digest 用非串流 chat、ThinkFilter、RPM 統計。
+- **工具＝複製檔案即註冊**：`app/tools/` 每模組定義 `ENABLED` 與 `TOOLS`（型別註記自動生成 schema、docstring 即模型說明）；`template_tool.py` 為複製模板。內建 `keyword_search`（scope 隔離 ILIKE 檢索）。
+- **工具結果可引用**：工具回 `ToolReturn(return_value=帶 [C{id}] 文字, metadata={"chunks": [...]})`，router 把 chunks 併入引用對照表——模型引用工具找到的段落照樣可點擊跳轉高亮。
+- **安全底線**：無啟用工具 → 不帶 toolsets，管線行為與純串流一致。**降級保險**：帶工具請求在未輸出前收到 4xx → 剝除工具重試（防供應商不支援 function calling）。輪數上限 `UsageLimits(request_limit=5)`（含首輪＝最多 4 輪工具）。
+- **執行期設定**（settings 表 + `settings_store` 快取）：chat 的 base_url/api_key/model、附加 system prompt；API key 永不回傳明文。工具過程訊息不入庫（同 reasoning 先例）。
+
 ## 4. 資料模型
 
 ```sql
 users        (id, email, created_at)                    -- MVP 單一預設 user，預留擴充
+settings     (key PK, value JSONB, updated_at)          -- M7：執行期設定（白名單鍵）
 projects     (id, user_id, name, created_at)            -- M5：單層專案
 documents    (id, user_id, project_id NULL→未分類, title, filename, file_path,
               page_count, status, error_msg, digest JSONB, token_usage JSONB, created_at)
@@ -122,8 +130,11 @@ messages     (id, conversation_id, role, content TEXT,
 | GET/POST | /api/library/conversations | 全庫級對話 |
 | GET | /api/conversations/{id}/messages | 歷史訊息 |
 | POST | /api/conversations/{id}/messages | 送出提問，回應為 SSE 串流（依 conv.scope 檢索） |
+| GET/PUT | /api/settings | 執行期設定（api_key 遮罩為 `llm_api_key_set`；缺席=不變、空字串=清除） |
+| GET | /api/tools | 已註冊 LLM 工具清單（唯讀） |
+| GET | /api/usage | 累計 token + `rpm`（最近 60 秒 LLM 請求數） |
 
-SSE 事件格式：`event: token`（增量文字）、`event: citation`（結構化引用）、`event: done`（含 token_usage）、`event: error`。
+SSE 事件格式：`event: token`（增量文字）、`event: reasoning`（思考摘要，不入庫）、`event: tool`（工具活動 {name, status}）、`event: citations`（結構化引用）、`event: done`（含 token_usage）、`event: error`。
 
 ## 6. 專案結構
 

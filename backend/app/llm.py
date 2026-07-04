@@ -10,10 +10,12 @@ NIM 注意事項（docs/02-architecture.md D5）：
 import asyncio
 import json
 import re
-from collections.abc import AsyncIterator
+import time
+from collections import deque
 
 import httpx
 
+from app import settings_store
 from app.config import get_settings
 
 EMBED_BATCH_SIZE = 32
@@ -25,6 +27,31 @@ _RETRY_MARKERS = ("resourceexhausted", "rate limit", "429", "overloaded", "503")
 
 class LLMError(RuntimeError):
     pass
+
+
+# ---------- 執行期覆蓋（設定頁）與 RPM ----------
+
+def _chat_config() -> tuple[str, str, str]:
+    """chat 的 (base_url, api_key, model)：settings 覆蓋 > .env。"""
+    env = get_settings()
+    return (
+        settings_store.runtime("llm_base_url") or env.llm_base_url,
+        settings_store.runtime("llm_api_key") or env.llm_api_key,
+        settings_store.runtime("llm_chat_model") or env.llm_chat_model,
+    )
+
+
+_request_times: deque[float] = deque(maxlen=512)
+
+
+def _record_request() -> None:
+    _request_times.append(time.monotonic())
+
+
+def current_rpm() -> int:
+    """最近 60 秒內的 LLM API 請求數（chat + embedding）。"""
+    cutoff = time.monotonic() - 60
+    return sum(1 for ts in _request_times if ts >= cutoff)
 
 
 def _is_retryable(message: str) -> bool:
@@ -45,6 +72,7 @@ async def _embed(texts: list[str], input_type: str) -> list[list[float]]:
         for start in range(0, len(texts), EMBED_BATCH_SIZE):
             batch = texts[start : start + EMBED_BATCH_SIZE]
             for attempt in range(_MAX_ATTEMPTS):
+                _record_request()
                 resp = await client.post(
                     f"{settings.embed_base_url}/embeddings",
                     headers={"Authorization": f"Bearer {settings.embed_api_key}"},
@@ -124,95 +152,19 @@ class ThinkFilter:
         return text
 
 
-async def chat_stream(
-    messages: list[dict], *, max_tokens: int = 6144, temperature: float = 0.3
-) -> AsyncIterator[dict]:
-    """逐段輸出 {"type":"token","text":…}，結尾輸出 {"type":"usage",…}。
-
-    NIM 限流（ResourceExhausted）在尚未輸出任何 token 前可安全重試。
-    """
-    for attempt in range(_MAX_ATTEMPTS):
-        yielded = False
-        try:
-            async for event in _chat_stream_once(
-                messages, max_tokens=max_tokens, temperature=temperature
-            ):
-                # reasoning 事件不擋重試（限流常發生在思考早期；client 端會重置）
-                if event["type"] != "reasoning":
-                    yielded = True
-                yield event
-            return
-        except LLMError as e:
-            if yielded or attempt == _MAX_ATTEMPTS - 1 or not _is_retryable(str(e)):
-                raise
-            await _backoff(attempt)
-
-
-async def _chat_stream_once(
-    messages: list[dict], *, max_tokens: int, temperature: float
-) -> AsyncIterator[dict]:
-    """單次串流呼叫。max_tokens 對推理模型同時涵蓋思考段與答案，要留足。"""
-    settings = get_settings()
-    payload = {
-        "model": settings.llm_chat_model,
-        "messages": messages,
-        "stream": True,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "stream_options": {"include_usage": True},
-    }
-    think = ThinkFilter()
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        async with client.stream(
-            "POST",
-            f"{settings.llm_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            json=payload,
-        ) as resp:
-            if resp.status_code != 200:
-                body = (await resp.aread()).decode(errors="replace")
-                raise LLMError(f"chat API {resp.status_code}: {body[:300]}")
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                event = json.loads(data)
-                if err := event.get("error"):
-                    raise LLMError(f"chat stream error: {json.dumps(err)[:300]}")
-                if usage := event.get("usage"):
-                    yield {
-                        "type": "usage",
-                        "prompt_tokens": usage.get("prompt_tokens", 0),
-                        "completion_tokens": usage.get("completion_tokens", 0),
-                    }
-                choices = event.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                # 思考段以獨立事件輸出（前端等待態顯示），不進正文
-                if rtext := delta.get("reasoning_content"):
-                    yield {"type": "reasoning", "text": rtext}
-                if text := delta.get("content"):
-                    if cleaned := think.feed(text):
-                        yield {"type": "token", "text": cleaned}
-    if tail := think.flush():
-        yield {"type": "token", "text": tail}
-
-
 async def chat(
     messages: list[dict], *, max_tokens: int = 4096, temperature: float = 0.2
 ) -> tuple[str, dict]:
     """非串流 chat（限流自動重試）。回傳 (過濾思考段後的文字, usage)。"""
-    settings = get_settings()
+    base_url, api_key, model = _chat_config()
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         for attempt in range(_MAX_ATTEMPTS):
+            _record_request()
             resp = await client.post(
-                f"{settings.llm_base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model": settings.llm_chat_model,
+                    "model": model,
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": temperature,

@@ -107,6 +107,44 @@ export function getHealth(): Promise<Health> {
 export interface Usage {
   prompt_tokens: number;
   completion_tokens: number;
+  /** 最近 60 秒的 LLM API 請求數 */
+  rpm: number;
+}
+
+export interface SettingsView {
+  llm_base_url?: string;
+  llm_chat_model?: string;
+  llm_api_key_set: boolean;
+  system_prompt_extra?: string;
+  defaults: { llm_base_url: string; llm_chat_model: string };
+}
+
+export interface SettingsPatch {
+  llm_base_url?: string;
+  llm_api_key?: string;
+  llm_chat_model?: string;
+  system_prompt_extra?: string;
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+}
+
+export function getSettings(): Promise<SettingsView> {
+  return request<SettingsView>("/api/settings");
+}
+
+export function updateSettings(patch: SettingsPatch): Promise<SettingsView> {
+  return request<SettingsView>("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export function getTools(): Promise<ToolInfo[]> {
+  return request<ToolInfo[]>("/api/tools");
 }
 
 export function getUsage(): Promise<Usage> {
@@ -222,10 +260,17 @@ export function regenerateDigest(docId: number, language?: string): Promise<{ st
   return request<{ status: string }>(`/api/documents/${docId}/digest${qs}`, { method: "POST" });
 }
 
+export interface ToolEvent {
+  name: string;
+  status: "start" | "done" | "error";
+}
+
 export interface StreamHandlers {
   onToken: (text: string) => void;
   /** 推理模型的思考摘要（即時顯示用，不入庫） */
   onReasoning?: (text: string) => void;
+  /** LLM 工具呼叫活動（即時顯示用，不入庫） */
+  onTool?: (event: ToolEvent) => void;
   onCitations: (citations: Citation[]) => void;
   onDone: () => void;
   onError: (message: string) => void;
@@ -271,6 +316,7 @@ export async function streamMessage(
     const payload = JSON.parse(data);
     if (event === "token") handlers.onToken(payload.text as string);
     else if (event === "reasoning") handlers.onReasoning?.(payload.text as string);
+    else if (event === "tool") handlers.onTool?.(payload as ToolEvent);
     else if (event === "citations") handlers.onCitations(payload.citations as Citation[]);
     else if (event === "done") {
       ended = true;

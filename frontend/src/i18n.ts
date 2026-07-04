@@ -3,6 +3,17 @@ import { create } from "zustand";
 export type Lang = "zh-TW" | "en";
 export type Theme = "dark" | "light";
 
+/** 選項陣列驅動（新增語言/主題＝在此加一項） */
+export const LANG_OPTIONS: { value: Lang; label: string }[] = [
+  { value: "zh-TW", label: "中文" },
+  { value: "en", label: "English" },
+];
+
+export const THEME_OPTIONS: { value: Theme; labelKey: "themeDark" | "themeLight" }[] = [
+  { value: "dark", labelKey: "themeDark" },
+  { value: "light", labelKey: "themeLight" },
+];
+
 const DICT = {
   "zh-TW": {
     appName: "Paper Anchor · 文獻導讀",
@@ -62,6 +73,30 @@ const DICT = {
     thoughtFor: (s: number) => `已思考 ${s}s`,
     anchorTag: "錨點",
     themeToggle: "深/淺色",
+    settings: "設定",
+    settingsUsage: "用量",
+    settingsRpm: "每分鐘請求",
+    settingsTokens: "累計 token",
+    settingsLlm: "Chat LLM 來源",
+    settingsBaseUrl: "Base URL",
+    settingsApiKey: "API Key",
+    settingsApiKeySet: "已設定（留空維持不變）",
+    settingsApiKeyUnset: "未設定（使用 .env）",
+    settingsClearKey: "清除",
+    settingsModel: "模型",
+    settingsSystemPrompt: "附加系統提示詞",
+    settingsSystemPromptHint: "附加在內建守則之後，對所有對話生效",
+    settingsLanguage: "語言（介面與回答）",
+    settingsTheme: "主題",
+    themeDark: "深色",
+    themeLight: "淺色",
+    settingsTools: "LLM 工具",
+    settingsToolsHint: "新增工具：複製 backend/app/tools/template_tool.py",
+    settingsEmbedNote: "Embedding 來源固定於 .env（更換需重建全部向量）",
+    save: "儲存",
+    saved: "已儲存",
+    close: "關閉",
+    toolActivity: (name: string) => `🔧 ${name}`,
   },
   en: {
     appName: "Paper Anchor",
@@ -121,6 +156,30 @@ const DICT = {
     thoughtFor: (s: number) => `thought for ${s}s`,
     anchorTag: "anchor",
     themeToggle: "Theme",
+    settings: "Settings",
+    settingsUsage: "Usage",
+    settingsRpm: "Requests / min",
+    settingsTokens: "Total tokens",
+    settingsLlm: "Chat LLM source",
+    settingsBaseUrl: "Base URL",
+    settingsApiKey: "API Key",
+    settingsApiKeySet: "Set (leave blank to keep)",
+    settingsApiKeyUnset: "Not set (using .env)",
+    settingsClearKey: "Clear",
+    settingsModel: "Model",
+    settingsSystemPrompt: "Extra system prompt",
+    settingsSystemPromptHint: "Appended after built-in rules; applies to all chats",
+    settingsLanguage: "Language (UI & answers)",
+    settingsTheme: "Theme",
+    themeDark: "Dark",
+    themeLight: "Light",
+    settingsTools: "LLM tools",
+    settingsToolsHint: "Add tools: copy backend/app/tools/template_tool.py",
+    settingsEmbedNote: "Embedding source is fixed in .env (changing it requires re-indexing)",
+    save: "Save",
+    saved: "Saved",
+    close: "Close",
+    toolActivity: (name: string) => `🔧 ${name}`,
   },
 } as const;
 

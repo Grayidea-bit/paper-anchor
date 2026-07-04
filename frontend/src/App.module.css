@@ -61,45 +61,19 @@
   flex: 1;
 }
 
-.themeBtn {
+.gearBtn {
   border: none;
   background: none;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 15px;
   cursor: pointer;
   padding: 2px 4px;
-  transition: color 0.13s ease;
+  transition: color 0.13s ease, transform 0.2s ease;
 }
 
-.themeBtn:hover {
+.gearBtn:hover {
   color: var(--text-strong);
-}
-
-.langSwitch {
-  display: flex;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.langBtn,
-.langActive {
-  border: none;
-  background: none;
-  font: 500 11px var(--mono);
-  padding: 4px 9px;
-  cursor: pointer;
-  color: var(--text-muted);
-  transition: all 0.13s ease;
-}
-
-.langActive {
-  background: var(--text-primary);
-  color: var(--bg-app);
-}
-
-.langBtn:hover {
-  color: var(--text-strong);
+  transform: rotate(30deg);
 }
 
 .status {

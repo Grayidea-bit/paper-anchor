@@ -9,6 +9,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import settings_store
 from app.config import get_settings
 from app.db import repo
 
@@ -76,18 +77,19 @@ async def retrieve_context(
     return sorted(unique, key=lambda c: (c["document_id"], c["chunk_index"]))
 
 
-def build_messages(
+def build_system(
     context_chunks: list[dict],
-    history: list[dict],
-    question: str,
     *,
     scope: str = "document",
     scope_title: str | None = None,
-    selection_text: str | None = None,
     language: str | None = None,
-) -> list[dict]:
-    """組裝 chat messages。scope_title：document=文獻標題、project=專案名、library=None。"""
+) -> str:
+    """系統提示詞 + 可引用段落 context block（agent 的 instructions）。"""
     system = load_prompt("chat_system.md").replace("{language}", language_name(language))
+    # 設定頁的附加系統提示詞（使用者自訂，附在守則之後）
+    extra = settings_store.runtime("system_prompt_extra")
+    if extra:
+        system += f"\n\n## 使用者附加指示\n\n{extra}"
 
     multi_doc = scope != "document"
     if multi_doc:
@@ -103,16 +105,34 @@ def build_messages(
         context_lines = [f"# 文獻：{scope_title}", "", "# 可引用段落"]
         for c in context_chunks:
             context_lines.append(f"[C{c['id']}] (p.{c['page']}) {c['content']}")
-    context_block = "\n".join(context_lines)
+    return system + "\n\n" + "\n".join(context_lines)
 
-    messages: list[dict] = [{"role": "system", "content": system + "\n\n" + context_block}]
+
+def build_user_content(question: str, selection_text: str | None = None) -> str:
+    if selection_text:
+        return f"我選取了這段原文：\n> {selection_text}\n\n{question}"
+    return question
+
+
+def build_messages(
+    context_chunks: list[dict],
+    history: list[dict],
+    question: str,
+    *,
+    scope: str = "document",
+    scope_title: str | None = None,
+    selection_text: str | None = None,
+    language: str | None = None,
+) -> list[dict]:
+    """OpenAI 格式 messages（digest/測試沿用；對話管線改走 agent.stream_chat）。"""
+    system = build_system(
+        context_chunks, scope=scope, scope_title=scope_title, language=language
+    )
+    messages: list[dict] = [{"role": "system", "content": system}]
     # 空訊息（曾中斷的串流殘留）不進 prompt
     for m in [m for m in history if m["content"].strip()][-HISTORY_LIMIT:]:
         messages.append({"role": m["role"], "content": m["content"]})
-    user_content = question
-    if selection_text:
-        user_content = f"我選取了這段原文：\n> {selection_text}\n\n{question}"
-    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "user", "content": build_user_content(question, selection_text)})
     return messages
 
 

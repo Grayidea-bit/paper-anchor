@@ -78,6 +78,15 @@
 - [x] **思考中卡片**（新功能）：後端把 reasoning_content 以 SSE `reasoning` 事件串流（不入庫）；前端顯示計時「思考中 · Ns」+ 串流推理摘要（固定高度防跳動）；回答開始後收合為「已思考 Ns ▸」可展開
 - 驗證：pytest 21、ruff、tsc 全綠；瀏覽器實測深/淺兩主題、側欄導航、chip 跳轉（頁碼膠囊同步 p.8/9、錨點標籤、指示條）全部符合設計稿。
 
+### M7 — Pydantic AI Agent 環境 + 設定 Modal + PDF 縮放 ✅ 2026-07-05
+- [x] 煙霧測試先行：NIM + deepseek-v4-flash + Pydantic AI tools 實測可用（工具觸發 3/3、ThinkingPart 原生輸出、usage 含工具輪；失敗案例全為 NIM 容量限流）——框架採用決策以實據拍板
+- [x] `services/agent.py`：Pydantic AI 對話管線（事件映射、4xx 剝工具降級、限流退避、UsageLimits(5)）；llm.py 移除舊 chat_stream；測試抓到並修正 PartStartEvent 首 token 遺漏
+- [x] `app/tools/`：複製即註冊（ENABLED/TOOLS 協定、schema 自動生成）、template_tool.py 模板、keyword_search 範例（ToolReturn.metadata 引用鏈）
+- [x] 設定 Modal：RPM（60 秒窗）+ tokens 用量、chat LLM 執行期切換（settings 表 + 白名單 + key 遮罩）、附加 system prompt、語言/主題選項陣列驅動、工具唯讀清單；修瀏覽器 autofill 誤填
+- [x] PDF 獨立縮放：50–200% 步進 25、localStorage、等比捲動校正、沿用虛擬化；實測 canvas/高亮同步 1.25×、右欄零影響
+- [x] healthz 改讀 _chat_config（設定切模型後顯示正確）；docs D7 + CLAUDE.md 鐵律 3 措辭更新
+- 驗證：pytest 39 passed（+18 新增，含 TestModel/FunctionModel 原生測試）、ruff、tsc 全綠；工具 SSE 事件鏈 curl 實測（keyword_search start→done）。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

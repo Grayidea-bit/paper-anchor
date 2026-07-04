@@ -162,6 +162,26 @@
   word-break: break-word;
 }
 
+.toolActivity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 8px;
+}
+
+.toolActivityItem {
+  font: 400 10.5px var(--mono);
+  color: var(--text-faint);
+}
+
+.toolActivityItem[data-status="done"] {
+  color: var(--text-muted);
+}
+
+.toolActivityItem[data-status="error"] {
+  color: var(--error);
+}
+
 .thoughtWrap {
   margin-bottom: 8px;
 }

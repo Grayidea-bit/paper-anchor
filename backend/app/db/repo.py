@@ -372,6 +372,51 @@ async def total_token_usage(session: AsyncSession) -> dict:
     }
 
 
+def escape_like(text_value: str) -> str:
+    """跳脫 ILIKE 的萬用字元（% _ \\），供關鍵字工具使用。"""
+    return (
+        text_value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+
+
+async def search_chunks_scoped(
+    session: AsyncSession,
+    query: str,
+    k: int,
+    *,
+    doc_id: int | None = None,
+    project_id: int | None = None,
+) -> list[dict]:
+    """關鍵字全文檢索（ILIKE），範圍隔離同 similar_chunks_scoped（SQL 層）。"""
+    pattern = f"%{escape_like(query)}%"
+    filters = ["d.user_id = :uid", "c.content ILIKE :pat ESCAPE '\\'"]
+    params: dict = {"uid": DEFAULT_USER_ID, "pat": pattern, "k": k}
+    if doc_id is not None:
+        filters.append("c.document_id = :doc_id")
+        params["doc_id"] = doc_id
+    elif project_id is not None:
+        filters.append("d.project_id = :pid")
+        params["pid"] = project_id
+        filters.append("d.status = 'ready'")
+    else:
+        filters.append("d.status = 'ready'")
+    rows = await session.execute(
+        text(
+            f"""
+            SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+                   c.content, c.bbox_list, d.title AS document_title
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE {" AND ".join(filters)}
+            ORDER BY c.document_id, c.chunk_index
+            LIMIT :k
+            """
+        ),
+        params,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
 # ---------- conversations / messages ----------
 
 async def create_conversation(

@@ -1,0 +1,80 @@
+"""執行期使用者設定（DB 持久化 + 記憶體快取）。
+
+.env 是預設值；settings 表的值可在執行期覆蓋（LLM 來源、系統提示詞、自訂工具）。
+llm.py / rag.py 以同步的 runtime() 讀快取，避免在串流熱路徑上查 DB。
+"""
+
+import json
+import logging
+
+from sqlalchemy import text
+
+from app.db.session import SessionLocal
+
+logger = logging.getLogger(__name__)
+
+# 允許的設定鍵（白名單，防止任意寫入）；工具是 code-based（app/tools/），不走設定
+ALLOWED_KEYS = {
+    "llm_base_url",
+    "llm_api_key",
+    "llm_chat_model",
+    "system_prompt_extra",
+}
+SECRET_KEYS = {"llm_api_key"}
+
+_cache: dict | None = None
+
+
+async def ensure_loaded() -> dict:
+    global _cache
+    if _cache is None:
+        async with SessionLocal() as session:
+            rows = await session.execute(text("SELECT key, value FROM settings"))
+            _cache = {r.key: r.value for r in rows}
+        logger.info("settings loaded: %s keys", len(_cache))
+    return _cache
+
+
+def runtime(key: str, default=None):
+    """同步讀快取（未載入時回 default；lifespan 啟動時已載入）。"""
+    if _cache is None:
+        return default
+    return _cache.get(key, default)
+
+
+async def update(values: dict) -> dict:
+    """白名單合併寫入；空字串視為清除該鍵（回落 .env 預設）。"""
+    global _cache
+    await ensure_loaded()
+    async with SessionLocal() as session:
+        for key, value in values.items():
+            if key not in ALLOWED_KEYS:
+                continue
+            if value in ("", None):
+                await session.execute(
+                    text("DELETE FROM settings WHERE key = :key"), {"key": key}
+                )
+                _cache.pop(key, None)
+            else:
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO settings (key, value) VALUES (:key, CAST(:value AS jsonb))
+                        ON CONFLICT (key)
+                        DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+                        """
+                    ),
+                    {"key": key, "value": json.dumps(value)},
+                )
+                _cache[key] = value
+        await session.commit()
+    return dict(_cache)
+
+
+def masked_view() -> dict:
+    """對外呈現：秘密鍵只回「已設定」布林。"""
+    data = dict(_cache or {})
+    out = {k: v for k, v in data.items() if k not in SECRET_KEYS}
+    for key in SECRET_KEYS:
+        out[f"{key}_set"] = bool(data.get(key))
+    return out

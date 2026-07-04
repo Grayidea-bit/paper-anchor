@@ -13,7 +13,7 @@
 
 1. **引用錨點是產品靈魂**：任何改動不得破壞 chunk 的 `page`/`bbox_list` 資訊鏈（解析 → 入庫 → RAG → SSE → 前端高亮）。改動相關程式碼必須跑引用命中測試。
 2. **不引入 LangChain / LlamaIndex**：RAG 流程手寫，保持可控。
-3. **LLM 呼叫只經過 `backend/app/llm.py`**：不得在其他模組直接打供應商 API。供應商設定只讀 `config.py`（來自 .env）。
+3. **LLM 供應商存取僅限 `backend/app/llm.py` 與 `backend/app/services/agent.py`（Pydantic AI）**：不得在其他模組直接打供應商 API。供應商設定經 `llm._chat_config()`（settings 執行期覆蓋 > .env）。給 LLM 用的工具放 `app/tools/`（複製 template_tool.py 新增）。
 4. **Prompt 一律放 `backend/app/prompts/*.md`**：不得散落在程式碼字串裡。
 5. **API 回應格式遵守 `docs/02-architecture.md` §5**：要改介面先改文件，並在任務卡註明 breaking change。
 6. **秘密不入庫**：API key 只放 `.env`（已在 .gitignore）；`.env.example` 保持同步。

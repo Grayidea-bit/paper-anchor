@@ -15,9 +15,12 @@ import { useT } from "../../i18n";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
-/** 渲染寬度基準：頁面實際縮放 = PAGE_WIDTH / 頁寬(pt) */
+/** 渲染寬度基準（zoom=100%）：頁面實際縮放 = renderWidth / 頁寬(pt) */
 const PAGE_WIDTH = 780;
 const MIN_SELECTION_CHARS = 8;
+const ZOOM_MIN = 50;
+const ZOOM_MAX = 200;
+const ZOOM_STEP = 25;
 
 interface SelMenu {
   x: number;
@@ -126,6 +129,31 @@ export function PDFPane() {
     [menu, resolveChunkId, requestSelectionAsk],
   );
 
+  // PDF 獨立縮放（只影響左欄；右欄對話零影響）
+  const [zoom, setZoom] = useState(() => {
+    const saved = Number(localStorage.getItem("pdf_zoom"));
+    return saved >= ZOOM_MIN && saved <= ZOOM_MAX ? saved : 100;
+  });
+  const renderWidth = Math.round((PAGE_WIDTH * zoom) / 100);
+  const paneElRef = useRef<HTMLElement | null>(null);
+  const changeZoom = useCallback((delta: number | "reset") => {
+    setZoom((prev) => {
+      const next = delta === "reset" ? 100 : prev + delta;
+      const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+      if (clamped === prev) return prev;
+      localStorage.setItem("pdf_zoom", String(clamped));
+      // 等比捲動校正：維持視點位置
+      const pane = paneElRef.current;
+      if (pane) {
+        const ratio = clamped / prev;
+        requestAnimationFrame(() => {
+          pane.scrollTop = pane.scrollTop * ratio;
+        });
+      }
+      return clamped;
+    });
+  }, []);
+
   // 頁碼膠囊：viewport 中線落在哪一頁
   const [currentPage, setCurrentPage] = useState(1);
   const paneRef = useRef<HTMLElement | null>(null);
@@ -161,6 +189,7 @@ export function PDFPane() {
         onScroll={onScroll}
         ref={(el) => {
           paneRef.current = el;
+          paneElRef.current = el;
         }}
       >
         {error && <p className={styles.error}>{t.pdfError}{error}</p>}
@@ -168,7 +197,13 @@ export function PDFPane() {
         <div className={styles.pages}>
           {pdf &&
             Array.from({ length: numPages }, (_, i) => i + 1).map((n) => (
-              <PageCanvas key={n} pdf={pdf} pageNumber={n} highlight={highlight} />
+              <PageCanvas
+                key={n}
+                pdf={pdf}
+                pageNumber={n}
+                highlight={highlight}
+                renderWidth={renderWidth}
+              />
             ))}
         </div>
         {menu && (
@@ -192,6 +227,19 @@ export function PDFPane() {
           p. {currentPage} / {numPages}
         </span>
       )}
+      {pdf && (
+        <span className={styles.zoomBar}>
+          <button onClick={() => changeZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>
+            −
+          </button>
+          <button className={styles.zoomValue} onClick={() => changeZoom("reset")} title="100%">
+            {zoom}%
+          </button>
+          <button onClick={() => changeZoom(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}>
+            ＋
+          </button>
+        </span>
+      )}
       {pdf && highlight && numPages > 0 && (
         <span className={styles.miniTrack}>
           <span
@@ -207,17 +255,17 @@ export function PDFPane() {
   );
 }
 
-/** 預設佔位高度（US Letter 比例），首頁渲染後以實際高度取代 */
-const ESTIMATED_PAGE_HEIGHT = Math.round(PAGE_WIDTH * 1.294);
-
 function PageCanvas({
   pdf,
   pageNumber,
   highlight,
+  renderWidth,
 }: {
   pdf: PDFDocumentProxy;
   pageNumber: number;
   highlight: HighlightTarget | null;
+  /** 目標渲染寬度（px），隨 zoom 變動 */
+  renderWidth: number;
 }) {
   const t = useT();
   const holderRef = useRef<HTMLDivElement>(null);
@@ -258,7 +306,7 @@ function PageCanvas({
       const page = await pdf.getPage(pageNumber);
       if (cancelled) return;
       const base = page.getViewport({ scale: 1 });
-      const pageScale = PAGE_WIDTH / base.width;
+      const pageScale = renderWidth / base.width;
       const viewport = page.getViewport({ scale: pageScale });
       const canvas = canvasRef.current;
       const holder = holderRef.current;
@@ -287,7 +335,7 @@ function PageCanvas({
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [pdf, pageNumber, visible]);
+  }, [pdf, pageNumber, visible, renderWidth]);
 
   // 文字層（選取提問的基礎）：獨立 effect，等 canvas 完成（scale 就緒）才渲染，
   // 避免與 canvas 渲染在同一 effect 內因 StrictMode 雙跑互相清空
@@ -342,7 +390,7 @@ function PageCanvas({
       data-page={pageNumber}
       style={
         scale === null
-          ? { width: PAGE_WIDTH, height: ESTIMATED_PAGE_HEIGHT }
+          ? { width: renderWidth, height: Math.round(renderWidth * 1.294) }
           : undefined
       }
     >

@@ -30,6 +30,8 @@ type LocalMessage = Omit<Message, "id" | "created_at"> & {
   reasoning?: string;
   startedAt?: number;
   thoughtSeconds?: number;
+  /** 工具活動（僅本次串流）：如 "keyword_search:done" */
+  toolEvents?: string[];
 };
 type Attached = { text: string; chunkId: number | null };
 
@@ -157,6 +159,18 @@ function Chat({ context }: { context: ChatContext }) {
               })),
             onReasoning: (text) =>
               patchLast((m) => ({ ...m, reasoning: (m.reasoning ?? "") + text })),
+            onTool: (te) =>
+              patchLast((m) => {
+                const events = [...(m.toolEvents ?? [])];
+                if (te.status === "start") events.push(`${te.name}:start`);
+                else {
+                  // start → done/error 就地更新
+                  const i = events.lastIndexOf(`${te.name}:start`);
+                  if (i >= 0) events[i] = `${te.name}:${te.status}`;
+                  else events.push(`${te.name}:${te.status}`);
+                }
+                return { ...m, toolEvents: events };
+              }),
             onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
             onDone: () => patchLast((m) => ({ ...m, pending: false })),
             onError: (message) => {
@@ -292,6 +306,19 @@ function Chat({ context }: { context: ChatContext }) {
               )}
               {m.role === "assistant" && m.thoughtSeconds != null && m.reasoning && (
                 <ThoughtToggle seconds={m.thoughtSeconds} reasoning={m.reasoning} />
+              )}
+              {m.role === "assistant" && m.toolEvents && m.toolEvents.length > 0 && (
+                <div className={styles.toolActivity}>
+                  {m.toolEvents.map((te, j) => {
+                    const [name, status] = te.split(":");
+                    return (
+                      <span key={j} className={styles.toolActivityItem} data-status={status}>
+                        {t.toolActivity(name)}
+                        {status === "done" ? " ✓" : status === "error" ? " ✗" : "…"}
+                      </span>
+                    );
+                  })}
+                </div>
               )}
               {m.role === "assistant" ? (
                 <MarkdownWithCitations

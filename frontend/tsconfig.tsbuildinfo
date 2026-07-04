@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/i18n.ts","./src/main.tsx","./src/api/client.ts","./src/components/ChatPane/ChatPane.tsx","./src/components/Library/Library.tsx","./src/components/PDFPane/PDFPane.tsx","./src/stores/readerStore.ts"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/i18n.ts","./src/main.tsx","./src/api/client.ts","./src/components/ChatPane/ChatPane.tsx","./src/components/Library/Library.tsx","./src/components/PDFPane/PDFPane.tsx","./src/components/Settings/SettingsModal.tsx","./src/stores/readerStore.ts"],"version":"5.9.3"}

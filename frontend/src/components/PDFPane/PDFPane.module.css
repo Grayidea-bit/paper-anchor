@@ -71,6 +71,45 @@
   z-index: 5;
 }
 
+/* ---- 縮放控制 ---- */
+
+.zoomBar {
+  position: absolute;
+  top: 14px;
+  right: 34px;
+  display: flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 20px;
+  overflow: hidden;
+  z-index: 5;
+}
+
+.zoomBar button {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: 500 13px var(--mono);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.zoomBar button:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.zoomBar button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.zoomValue {
+  font-size: 11px !important;
+  min-width: 46px;
+}
+
 /* ---- 迷你捲動指示（琥珀段 = 高亮位置） ---- */
 
 .miniTrack {

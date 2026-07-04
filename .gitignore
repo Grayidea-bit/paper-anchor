@@ -1,5 +1,6 @@
 .env
 docs/fixtures/*.pdf
+docs/issues/*.md
 __pycache__/
 *.pyc
 .venv/

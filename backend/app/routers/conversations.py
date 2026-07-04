@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 from app.db import repo
 from app.db.session import SessionLocal
 from app.errors import AppError, NotFoundError
-from app.llm import LLMError, chat_stream, embed_query
-from app.services import rag
+from app.llm import LLMError, embed_query
+from app.services import agent, rag
+from app.tools import ToolDeps
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["conversations"])
@@ -123,24 +124,31 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
                     project_id=project_id,
                     selection_chunk_id=body.selection.chunk_id if body.selection else None,
                 )
-            messages = rag.build_messages(
-                context,
-                history,
-                body.content,
-                scope=scope,
-                scope_title=scope_title,
-                selection_text=body.selection.text if body.selection else None,
-                language=body.language,
+            system = rag.build_system(
+                context, scope=scope, scope_title=scope_title, language=body.language
             )
+            user_content = rag.build_user_content(
+                body.content, body.selection.text if body.selection else None
+            )
+            deps = ToolDeps(scope=scope, doc_id=doc_id, project_id=project_id)
+            known_ids = {c["id"] for c in context}
             parts: list[str] = []
             usage: dict = {}
-            async for event in chat_stream(messages):
+            async for event in agent.stream_chat(system, history, user_content, deps):
                 if event["type"] == "token":
                     parts.append(event["text"])
                     yield _sse("token", {"text": event["text"]})
                 elif event["type"] == "reasoning":
                     # 思考摘要只供即時顯示，不入庫
                     yield _sse("reasoning", {"text": event["text"]})
+                elif event["type"] == "tool":
+                    yield _sse("tool", {"name": event["name"], "status": event["status"]})
+                elif event["type"] == "context_chunks":
+                    # 工具找到的段落併入引用對照表（去重），[C{id}] 即可解析
+                    for chunk in event["chunks"]:
+                        if chunk["id"] not in known_ids:
+                            known_ids.add(chunk["id"])
+                            context.append(chunk)
                 elif event["type"] == "usage":
                     usage = {
                         "prompt_tokens": event["prompt_tokens"],
