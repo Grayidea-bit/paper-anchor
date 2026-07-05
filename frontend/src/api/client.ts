@@ -61,6 +61,7 @@ export interface Conversation {
   id: number;
   document_id: number;
   title: string;
+  model?: string | null;
   created_at: string;
 }
 
@@ -111,19 +112,45 @@ export interface Usage {
   rpm: number;
 }
 
+export type ChatBackend = "openai" | "claude-sdk";
+
+/** 選項陣列驅動（新增後端＝在此加一項） */
+export const CHAT_BACKEND_OPTIONS: { value: ChatBackend }[] = [
+  { value: "openai" },
+  { value: "claude-sdk" },
+];
+
+/** 內建 Claude 模型清單（前端持一份，值須與後端一致） */
+export const CLAUDE_MODELS: { value: string; label: string }[] = [
+  { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
+  { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
+  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+];
+
 export interface SettingsView {
   llm_base_url?: string;
   llm_chat_model?: string;
+  llm_chat_models?: string[];
   llm_api_key_set: boolean;
   system_prompt_extra?: string;
-  defaults: { llm_base_url: string; llm_chat_model: string };
+  chat_backend?: ChatBackend;
+  claude_oauth_token_set: boolean;
+  defaults: {
+    llm_base_url: string;
+    llm_chat_model: string;
+    llm_chat_models: string[];
+    chat_backend: ChatBackend;
+  };
 }
 
 export interface SettingsPatch {
   llm_base_url?: string;
   llm_api_key?: string;
   llm_chat_model?: string;
+  llm_chat_models?: string[];
   system_prompt_extra?: string;
+  chat_backend?: ChatBackend;
+  claude_oauth_token?: string;
 }
 
 export interface ToolInfo {
@@ -186,6 +213,17 @@ export function createConversation(docId: number, title = "新對話"): Promise<
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
+  });
+}
+
+export function setConversationModel(
+  convId: number,
+  model: string | null,
+): Promise<Conversation> {
+  return request<Conversation>(`/api/conversations/${convId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
   });
 }
 

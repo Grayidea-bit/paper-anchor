@@ -57,7 +57,7 @@ class TestStreamChatWithTestModel:
 
     @pytest.fixture
     def use_test_model(self, monkeypatch):
-        def build(system: str, with_tools: bool):
+        def build(system: str, with_tools: bool, model_override: str | None = None):
             from pydantic_ai import Agent
 
             toolset = agent_mod.tools_pkg.build_toolset() if with_tools else None
@@ -110,7 +110,7 @@ class TestDegradeOn400:
             yield "ok "
             yield "done"
 
-        def build(system: str, with_tools: bool):
+        def build(system: str, with_tools: bool, model_override: str | None = None):
             toolset = agent_mod.tools_pkg.build_toolset() if with_tools else None
             return Agent(
                 FunctionModel(stream_function=flaky_stream),

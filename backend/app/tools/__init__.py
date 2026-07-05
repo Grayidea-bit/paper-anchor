@@ -70,3 +70,96 @@ def list_tools() -> list[dict]:
         }
         for fn in _discover()
     ]
+
+
+# ---------- Claude Agent SDK 橋接（M8）----------
+# 把 _discover() 同一批 Pydantic AI 工具函式包成 Agent SDK @tool 轉接器。
+# 工具業務碼零改動：轉接器用輕量 shim 帶 deps 呼叫原函式，
+# ToolReturn.metadata["chunks"] 走側信道（呼叫方傳入的 sink list）。
+
+
+class _CtxShim:
+    """假 RunContext：本專案工具只讀 ctx.deps（見 template_tool.py）。
+
+    比 pydantic_ai.RunContext（需 model/usage 等重量級參數）輕，
+    足以覆蓋 app/tools/ 內工具的用法。
+    """
+
+    __slots__ = ("deps",)
+
+    def __init__(self, deps: "ToolDeps") -> None:
+        self.deps = deps
+
+
+def _tool_description(fn) -> str:
+    """取 docstring 全文當工具描述（模型判斷何時呼叫的依據）。"""
+    return (fn.__doc__ or fn.__name__).strip()
+
+
+def _input_schema(fn) -> dict:
+    """從函式簽名生 SDK @tool 的 input_schema（簡化 dict 形式：name -> type）。
+
+    剝掉第一個 ctx 參數（RunContext），其餘型別註記直接對應。
+    未知/複雜註記退回 str（模型看得懂字串）。
+    """
+    import inspect
+
+    sig = inspect.signature(fn)
+    params = list(sig.parameters.values())
+    # 第一參數是 ctx: RunContext[ToolDeps]（若工具收情境）→ 剝除
+    if params and params[0].name in ("ctx", "context"):
+        params = params[1:]
+    schema: dict = {}
+    for p in params:
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            continue
+        anno = p.annotation
+        schema[p.name] = anno if anno in (str, int, float, bool) else str
+    return schema
+
+
+def _needs_ctx(fn) -> bool:
+    import inspect
+
+    params = list(inspect.signature(fn).parameters.values())
+    return bool(params) and params[0].name in ("ctx", "context")
+
+
+def _make_adapter(fn, deps: "ToolDeps", sink: list):
+    """把單一原工具函式包成 SDK @tool 轉接器（async，回 SDK content dict）。"""
+    from claude_agent_sdk import tool
+
+    async def _impl(args: dict) -> dict:
+        if _needs_ctx(fn):
+            result = await fn(_CtxShim(deps), **args)
+        else:
+            result = await fn(**args)
+        # ToolReturn（有 return_value/metadata）或純字串都要容忍
+        return_value = getattr(result, "return_value", result)
+        metadata = getattr(result, "metadata", None)
+        if isinstance(metadata, dict) and metadata.get("chunks"):
+            sink.extend(metadata["chunks"])  # 側信道：引用鏈 chunks
+        text = return_value if isinstance(return_value, str) else str(return_value)
+        return {"content": [{"type": "text", "text": text}]}
+
+    decorated = tool(fn.__name__, _tool_description(fn), _input_schema(fn))(_impl)
+    return decorated
+
+
+def build_sdk_mcp_server(deps: "ToolDeps", sink: list):
+    """把啟用中的工具包成 Agent SDK MCP server（name 固定 "anchor"）。
+
+    Args:
+        deps: 對話情境，注入每次工具呼叫。
+        sink: per-request list；轉接器把 ToolReturn.metadata["chunks"] append 進來，
+            claude_backend 在每次 tool done 後讀取並吐 context_chunks（讀完清空）。
+
+    無啟用工具 → 回 None（claude_backend 就不掛 mcp_servers/allowed_tools）。
+    """
+    functions = _discover()
+    if not functions:
+        return None
+    from claude_agent_sdk import create_sdk_mcp_server
+
+    adapters = [_make_adapter(fn, deps, sink) for fn in functions]
+    return create_sdk_mcp_server("anchor", "0.0.1", adapters)

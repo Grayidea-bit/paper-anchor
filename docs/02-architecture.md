@@ -82,12 +82,31 @@
 - **引用標籤改用全域 chunk id**：`[C{chunks.id}]`（三種 scope 統一）。chunk_index 跨文獻撞號；「每請求臨時編號」會讓多輪對話的歷史標籤錯配到新 chunk，否決。citations 結構加 `label`（=標籤數字）、`document_id`、`document_title`；舊訊息（label 缺）由前端以 chunk_index fallback 配對，零資料遷移。
 - **selection 提問僅限 document scope**（其他 scope 回 400）；digest 管線不變（單篇語境無撞號）。
 
-### D7 Agent 環境與工具（M7，Pydantic AI）
+### D7 Agent 環境與工具（M7，Pydantic AI；M8 擴展後端分派）
 - **對話管線建在 Pydantic AI 上**（`services/agent.py`）：模型每請求以 `llm._chat_config()`（settings 覆蓋 .env）建構 `OpenAIChatModel`；框架事件映射為本專案事件協定（token/reasoning/tool/context_chunks/usage）。llm.py 保留 embeddings（NIM input_type 特規）、digest 用非串流 chat、ThinkFilter、RPM 統計。
 - **工具＝複製檔案即註冊**：`app/tools/` 每模組定義 `ENABLED` 與 `TOOLS`（型別註記自動生成 schema、docstring 即模型說明）；`template_tool.py` 為複製模板。內建 `keyword_search`（scope 隔離 ILIKE 檢索）。
 - **工具結果可引用**：工具回 `ToolReturn(return_value=帶 [C{id}] 文字, metadata={"chunks": [...]})`，router 把 chunks 併入引用對照表——模型引用工具找到的段落照樣可點擊跳轉高亮。
 - **安全底線**：無啟用工具 → 不帶 toolsets，管線行為與純串流一致。**降級保險**：帶工具請求在未輸出前收到 4xx → 剝除工具重試（防供應商不支援 function calling）。輪數上限 `UsageLimits(request_limit=5)`（含首輪＝最多 4 輪工具）。
 - **執行期設定**（settings 表 + `settings_store` 快取）：chat 的 base_url/api_key/model、附加 system prompt；API key 永不回傳明文。工具過程訊息不入庫（同 reasoning 先例）。
+
+#### 後端分派（M8：Claude Agent SDK 後端）
+- **設定鍵 `chat_backend`**：settings 表值為 `'openai'`（NIM／OpenAI 相容，預設）或 `'claude-sdk'`（Claude Agent SDK）；使用者於設定頁切換。
+- **路由分派**：`agent.stream_chat()` 開頭讀 `chat_backend`：`'openai'` 續用既有 Pydantic AI 路徑（一行不動）；`'claude-sdk'` 委派 `services/claude_backend.py`，把 SDK 訊息/事件流映射為同一協定（token/reasoning/tool/context_chunks/usage）——router/SSE/引用鏈/前端零改動。範圍僅 chat；digest/embedding 續走 llm.py（Claude 無 embedding API）。
+- **工具橋接（Claude 後端）**：`tools.build_sdk_mcp_server(deps, sink)` 把 app/tools/ 同批函式包成 SDK `@tool` + `create_sdk_mcp_server`（server name `anchor`）；`ToolReturn.metadata["chunks"]` 走 per-request contextvars 側信道（`sink`）傳回，claude_backend 在每次 tool done 後吐 `context_chunks`——引用協定兩後端一致。
+- **安全鎖定**：ClaudeAgentOptions 一律 `tools=[]` + `setting_sources=[]` + `allowed_tools=["mcp__anchor__*"]`，`system_prompt` 用純字串（完全取代 Claude Code 提示詞），實測模型無任何內建工具（Bash/Read/Write）；token 放 `options.env["CLAUDE_CODE_OAUTH_TOKEN"]`，容器絕不設 ANTHROPIC_API_KEY（優先序會蓋過）。
+- **登入與付款**：NIM 後端使用者自備 API key；Claude 後端使用者以官方 `claude setup-token` 產出一年效期 token 貼入設定頁，用 Pro/Max 訂閱額度，無需另購 API credits。**不內建逆向 OAuth 端點**（未官方公開、有授權風險；見 roadmap M8）。
+
+#### 模型選擇（M9：每對話單獨設定）
+- **二層結構**：後端選項（settings `chat_backend` = `'openai'`|`'claude-sdk'`）決定**可選模型清單源頭**，模型選擇（每對話 `conversations.model`）決定**該對話用哪個模型**。
+- **模型清單來源**
+  - **NIM/OpenAI 後端**：使用者在設定頁填 settings 鍵 `llm_chat_models`（字串陣列，e.g. `["deepseek-v4-flash", "deepseek-v4-pro"]`）；對話區下拉顯示該陣列全部；首元素作為 `llm._chat_config()` 預設（digest/healthz 用同一鏈）。
+  - **Claude SDK 後端**：內建固定版本號清單 `app/models_catalog.py` 的 `CLAUDE_MODELS = ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"]`；前端靜態對應 `{value, label}` 映射；全部版本預先以訂閱 token 探測可用，不支援使用者自訂。版本更新時後端程式碼變動。
+- **資料持久化**：Migration `004_conversation_model.sql` 加 `conversations.model TEXT` 欄（NULL=未指定）。新 PATCH `/api/conversations/{id}` 取得 `{model: string}` 更新該欄。send_message 讀該欄：若不為空送 `agent.stream_chat(model=...)`；否則用 llm 預設鏈決定。
+- **模型校驗與回落**
+  - **單一 choke point**：`agent.stream_chat` 開頭呼叫 `_resolve_model(backend: str, model: str|None, available_models: list[str]) -> str` 進行校驗與回落。
+  - **允許清單校驗**：`backend == 'claude-sdk'` 時允許 = `CLAUDE_MODELS`；`backend == 'openai'` 時允許 = 使用者的 `llm_chat_models`（settings 項，若空陣列或不存則用 env 單一值）。
+  - **無效或 None 時回落**：若 `model is None` 或不在允許清單，靜默回落該後端預設（不報錯；digest/healthz 等機制無感呼叫）。回落後的 model 傳入 OpenAI SDK（`OpenAIChatModel(model_override=model)`）或 Claude backend（`_build_options(model=model)`）。
+- **前端行為**：對話區下拉列表值繫結 `conversations.model`；切換時 PATCH 端點寫 DB；支援「無選擇」→回落流程。
 
 ## 4. 資料模型
 

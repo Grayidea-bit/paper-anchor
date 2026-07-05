@@ -19,8 +19,14 @@ ALLOWED_KEYS = {
     "llm_api_key",
     "llm_chat_model",
     "system_prompt_extra",
+    # M8：Claude Agent SDK 後端（訂閱額度，官方 setup-token 貼碼）
+    "chat_backend",  # "openai" | "claude-sdk"
+    "claude_oauth_token",  # CLAUDE_CODE_OAUTH_TOKEN（setup-token 產出的一年效期 token）
+    "claude_model",  # 別名 "sonnet"/"opus"/"haiku" 或完整 id
+    # M9：openai/NIM 來源的可選模型清單（對話區下拉；JSON 陣列）
+    "llm_chat_models",
 }
-SECRET_KEYS = {"llm_api_key"}
+SECRET_KEYS = {"llm_api_key", "claude_oauth_token"}
 
 _cache: dict | None = None
 

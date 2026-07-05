@@ -87,6 +87,39 @@
 - [x] healthz 改讀 _chat_config（設定切模型後顯示正確）；docs D7 + CLAUDE.md 鐵律 3 措辭更新
 - 驗證：pytest 39 passed（+18 新增，含 TestModel/FunctionModel 原生測試）、ruff、tsc 全綠；工具 SSE 事件鏈 curl 實測（keyword_search start→done）。
 
+### M8 — Claude Agent SDK 後端（訂閱額度）2026-07-05
+- [x] 煙霧測試（比照 M7 先驗證後整合）：claude-agent-sdk 0.2.110（wheel 捆綁原生 CLI，容器免裝 Node）、options.env 注入 `CLAUDE_CODE_OAUTH_TOKEN` 生效、`include_partial_messages` 逐 token 串流（含 thinking_delta）、`@tool`+MCP 側信道、usage 欄位——全 PASS
+- [x] `services/claude_backend.py`：Claude SDK 聯絡層，把 SDK 訊息/事件流映射成同一協定（token/reasoning/tool/context_chunks/usage）；`agent.stream_chat()` 依 settings `chat_backend`（`'openai'`|`'claude-sdk'`，預設 openai）分派，router/SSE/引用鏈/前端零改動
+- [x] 工具橋接：`build_sdk_mcp_server()` 把 app/tools/ 同批函式轉 SDK MCP 工具，metadata chunks 走 contextvars 側信道傳遞（業務碼零改動）
+- [x] 安全鎖定：`tools=[]`＋`setting_sources=[]`＋白名單 `allowed_tools`（僅 mcp__anchor__*），實測模型無任何內建工具（Bash/Read/Write 全消失）
+- [x] 登入方式：官方 `claude setup-token` 貼碼（設定頁貼一年效期 token → 存 settings_store SECRET_KEYS）
+- **決策**：chat 第二後端採 Claude SDK（使用者用 Pro/Max 訂閱額度），digest/embedding 續用 NIM；settings modal 加「NIM ↔ Claude 訂閱」後端切換
+- **OAuth 一鍵登入：評估後放棄**。曾嘗試複刻 setup-token 的 PKCE 授權流程（逆向 CLI 2.1.191：入口 claude.com/cai/oauth/authorize、redirect platform.claude.com、scope user:inference），但瀏覽器點 Authorize 一律被前端擋「Invalid request format」（受控瀏覽器 session 與本機 CLI 登入上下文不同），且該 authorize/token 端點**從未官方公開、屬逆向不受支援**——Anthropic 已於 2026-03 要求 opencode 移除同款整合。放進開源專案有相容性與授權風險，故僅保留官方 setup-token 貼碼。
+- 驗證：pytest 63 passed（含 test_claude_backend 事件映射/側信道/安全組態/token 取用、test_settings_store 新鍵）、ruff、tsc 全綠
+- 記錄：docs/02-architecture.md D7「後端分派」小節；本段。
+
+### M9 — 每對話模型選擇（兩層設定） 2026-07-05
+- **目標**：把模型選擇拆兩層——設定頁只切「後端來源」（NIM/OpenAI 相容 ↔ Claude 訂閱，沿用 `chat_backend`）；模型改在**對話區下拉切換**，選的模型**寫入該對話（DB `conversations.model` 欄）、跟著該對話活動**（歷史重開能讀回）。
+- **NIM/OpenAI 來源**：使用者在設定頁填**多個模型**（settings 鍵 `llm_chat_models`，字串陣列，e.g. `["deepseek-v4-flash", "deepseek-v4-pro"]`）；對話區下拉顯示這份清單；首個元素作 `llm._chat_config()` 預設。
+- **Claude 訂閱來源**：**內建固定版本號清單**（後端 `app/models_catalog.py` 的 `CLAUDE_MODELS = ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"]`，前端靜態對應 `{value, label}`），全部已用訂閱 token 探測可用；不支援使用者自訂，Anthropic 版本更新時後端程式碼變動。
+- **實現**
+  - Migration `004_conversation_model.sql`：加 `conversations.model TEXT` 欄，允許 NULL（既有對話回落預設）。
+  - 新 PATCH `/api/conversations/{id}` 請求體 `{model: string}`，寫入該對話 DB 欄。
+  - `send_message` 讀 `conversations.model` 欄，若不為空傳入 `agent.stream_chat(model=...)`；否則用 llm 預設鏈決定。
+  - llm 預設鏈（digest/healthz 用同一邏輯）：`llm_chat_models[0]`（若非空） > `llm_chat_model`（env）> 供應商硬預設。
+- **分派與校驗**：`agent.stream_chat` 開頭增加單一 choke point `_resolve_model(backend, model, user_models_list)`——
+  - 允許清單校驗：`claude-sdk` 後端＝`CLAUDE_MODELS`；`openai` 後端＝使用者的 `llm_chat_models`（設定項，空則用 env 單一值）。
+  - 若 `model is None` 或 **不在允許清單**，靜默回落該來源預設（無報錯，使用者無感；digest/healthz 等機制呼叫）。
+  - 校驗後 `model` 傳入 OpenAI SDK（`OpenAIChatModel(model_override=model)`）或 Claude backend（`_build_options(model=model)`）。
+- **驗收**
+  - pytest 75 passed（含新的 test_model_resolution、test_conversation_model_persistence）、ruff、tsc 全綠
+  - 實測 E2E PASS：
+    - NIM 模型清單 roundtrip（設定存 3 個模型 → 新建對話下拉顯示全部 → 選第 2 個 → 對話讀回）
+    - 對話 model 持久化（新對話選 `claude-opus-4-8` 發問 → 重開頁面 → 同對話下拉仍顯選中 opus）
+    - Claude 指定版本送問得 4 個可跳轉引用（提問「訓練資料」回答精確度）
+    - 無 model 新對話、settings 不含 llm_chat_models 時，無報錯且能以預設模型對話
+  - digest 與 healthz 用 llm 預設鏈，對話記錄鎖定為 conversations.model
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

@@ -444,6 +444,36 @@
   color: var(--accent);
 }
 
+.modelSelect {
+  align-self: flex-end;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 5px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font: 500 11px var(--mono);
+  height: 36px;
+  max-width: 150px;
+  padding: 0 8px;
+  cursor: pointer;
+  transition: all 0.13s ease;
+  flex: none;
+}
+
+.modelSelect:hover:not(:disabled) {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+
+.modelSelect:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.modelSelect:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
 .input {
   flex: 1;
   resize: none;

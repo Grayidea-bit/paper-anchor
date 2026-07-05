@@ -31,6 +31,12 @@ class MessageCreate(BaseModel):
     language: str | None = Field(default=None, pattern=r"^[A-Za-z-]{2,10}$")
 
 
+class ConversationModelUpdate(BaseModel):
+    """對話區選用模型（最終允許清單校驗放 agent.stream_chat 開頭，這裡放寬）。"""
+
+    model: str | None = Field(default=None, max_length=100)
+
+
 @router.get("/documents/{doc_id}/conversations")
 async def list_document_conversations(doc_id: int) -> list[dict]:
     async with SessionLocal() as session:
@@ -74,6 +80,16 @@ async def list_messages(conv_id: int) -> list[dict]:
         return await repo.list_messages(session, conv_id)
 
 
+@router.patch("/conversations/{conv_id}")
+async def update_conversation_model(conv_id: int, body: ConversationModelUpdate) -> dict:
+    """對話區切換模型：寫入該對話，之後 send_message 讀這欄（每對話持久化）。"""
+    async with SessionLocal() as session:
+        if await repo.get_conversation(session, conv_id) is None:
+            raise NotFoundError("conversation", conv_id)
+        await repo.set_conversation_model(session, conv_id, body.model)
+        return await repo.get_conversation(session, conv_id)
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
@@ -107,6 +123,7 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
             scope_title = project["name"]
             project_id = project["id"]
         history = await repo.list_messages(session, conv_id)
+        model = conv.get("model")
 
     async def stream():
         try:
@@ -134,7 +151,9 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
             known_ids = {c["id"] for c in context}
             parts: list[str] = []
             usage: dict = {}
-            async for event in agent.stream_chat(system, history, user_content, deps):
+            async for event in agent.stream_chat(
+                system, history, user_content, deps, model=model
+            ):
                 if event["type"] == "token":
                     parts.append(event["text"])
                     yield _sse("token", {"text": event["text"]})

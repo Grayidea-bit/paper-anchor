@@ -31,13 +31,22 @@ class LLMError(RuntimeError):
 
 # ---------- 執行期覆蓋（設定頁）與 RPM ----------
 
+def _default_chat_model() -> str:
+    """openai 來源預設 model：llm_chat_models 第一項 > llm_chat_model > env 預設。"""
+    env = get_settings()
+    models = settings_store.runtime("llm_chat_models")
+    if isinstance(models, list) and models:
+        return models[0]
+    return settings_store.runtime("llm_chat_model") or env.llm_chat_model
+
+
 def _chat_config() -> tuple[str, str, str]:
     """chat 的 (base_url, api_key, model)：settings 覆蓋 > .env。"""
     env = get_settings()
     return (
         settings_store.runtime("llm_base_url") or env.llm_base_url,
         settings_store.runtime("llm_api_key") or env.llm_api_key,
-        settings_store.runtime("llm_chat_model") or env.llm_chat_model,
+        _default_chat_model(),
     )
 
 

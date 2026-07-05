@@ -44,6 +44,19 @@ EMBED_DIM=1024            # must match the DB VECTOR dim; pgvector index caps at
 
 Note: NVIDIA NIM's embedding API requires an `input_type` parameter (`passage` for indexing, `query` for search) — handled in `llm.py`; keep this in mind when switching providers.
 
+### Use your Claude subscription
+
+If you have a Claude Pro/Max/Team/Enterprise subscription, you can drive chat with your plan usage instead of a metered API key:
+
+1. On your machine, run `claude setup-token` (from [Claude Code](https://docs.claude.com/en/docs/claude-code)) and copy the one-year token it prints.
+2. In the app, open Settings → Chat LLM, switch to **Claude subscription**, and paste the token.
+
+Once connected, chat runs on the Claude Agent SDK with your subscription's included usage; citations, streaming, and tool calls behave identically to the OpenAI-compatible backend. (`setup-token` is the only authentication path Anthropic officially supports for this — the app does not embed any reverse-engineered OAuth endpoints.)
+
+This only covers chat — embedding still needs a NIM or other OpenAI-compatible provider key (`EMBED_*` above), since subscription usage doesn't cover embeddings.
+
+Note: subscription usage is for personal use per Anthropic's consumer terms — don't wire this backend up for shared/production traffic.
+
 ## Stack
 
 FastAPI · PostgreSQL + pgvector · PyMuPDF | React · TypeScript · PDF.js | hand-rolled RAG (no LangChain) | Docker Compose

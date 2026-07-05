@@ -3,14 +3,18 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./ChatPane.module.css";
 import {
+  CLAUDE_MODELS,
   createConversation,
   createScopedConversation,
   getDocument,
+  getSettings,
   listConversations,
   listMessages,
   listScopedConversations,
   regenerateDigest,
+  setConversationModel,
   streamMessage,
+  type ChatBackend,
   type Citation,
   type Conversation,
   type Digest,
@@ -73,11 +77,29 @@ function Chat({ context }: { context: ChatContext }) {
   const [attached, setAttached] = useState<Attached | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [chatBackend, setChatBackend] = useState<ChatBackend>("openai");
+  const [llmChatModels, setLlmChatModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastFailedRef = useRef<{ question: string; selection: Attached | null } | null>(null);
 
   const isDocument = context.kind === "document";
+
+  // 掛載時取來源設定（chat_backend、NIM 模型清單）供模型下拉使用
+  useEffect(() => {
+    let cancelled = false;
+    getSettings()
+      .then((view) => {
+        if (cancelled) return;
+        setChatBackend(view.chat_backend ?? "openai");
+        setLlmChatModels(view.llm_chat_models ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 初始化：對話串（三種 scope）+ 導讀（僅 document）
   useEffect(() => {
@@ -105,6 +127,7 @@ function Chat({ context }: { context: ChatContext }) {
             ));
       if (cancelled) return;
       setConvId(conv.id);
+      setSelectedModel(conv.model ?? null);
       const history = await listMessages(conv.id);
       if (!cancelled) setMessages(history);
     })().catch((e: Error) => !cancelled && setError(e.message));
@@ -250,7 +273,27 @@ function Chat({ context }: { context: ChatContext }) {
           );
     setConvId(conv.id);
     setMessages([]);
+    setSelectedModel(null);
   }, [context, streaming]);
+
+  const modelOptions =
+    chatBackend === "claude-sdk"
+      ? CLAUDE_MODELS
+      : llmChatModels.map((m) => ({ value: m, label: m }));
+
+  const changeModel = useCallback(
+    async (value: string) => {
+      if (convId === null) return;
+      const model = value || null;
+      setSelectedModel(model);
+      try {
+        await setConversationModel(convId, model);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [convId],
+  );
 
   const clickCitation = useCallback(
     (label: number, citations: Citation[]) => {
@@ -375,6 +418,23 @@ function Chat({ context }: { context: ChatContext }) {
         >
           ＋
         </button>
+        {modelOptions.length > 1 && (
+          <select
+            className={styles.modelSelect}
+            title={t.chatModelLabel}
+            aria-label={t.chatModelLabel}
+            value={selectedModel ?? ""}
+            disabled={convId === null}
+            onChange={(e) => void changeModel(e.target.value)}
+          >
+            <option value="">{t.modelDefault}</option>
+            {modelOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        )}
         <textarea
           ref={inputRef}
           className={styles.input}

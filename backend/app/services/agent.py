@@ -18,8 +18,18 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 
+from app import settings_store
 from app import tools as tools_pkg
-from app.llm import LLMError, ThinkFilter, _backoff, _chat_config, _is_retryable, _record_request
+from app.llm import (
+    LLMError,
+    ThinkFilter,
+    _backoff,
+    _chat_config,
+    _default_chat_model,
+    _is_retryable,
+    _record_request,
+)
+from app.models_catalog import CLAUDE_MODELS
 from app.tools import ToolDeps
 
 logger = logging.getLogger(__name__)
@@ -41,9 +51,11 @@ def _to_history(history: list[dict]) -> list:
     return messages
 
 
-def _build_agent(system: str, with_tools: bool) -> Agent:
+def _build_agent(system: str, with_tools: bool, model_override: str | None = None) -> Agent:
     base_url, api_key, model_name = _chat_config()
-    model = OpenAIChatModel(model_name, provider=OpenAIProvider(base_url=base_url, api_key=api_key))
+    model = OpenAIChatModel(
+        model_override or model_name, provider=OpenAIProvider(base_url=base_url, api_key=api_key)
+    )
     toolset = tools_pkg.build_toolset() if with_tools else None
     return Agent(
         model,
@@ -53,20 +65,50 @@ def _build_agent(system: str, with_tools: bool) -> Agent:
     )
 
 
+def _resolve_model(backend: str, model: str | None) -> str:
+    """送出前允許清單校驗（防任意 model 注入）：不在清單（或未選）→ 回落該來源預設。"""
+    if backend == "claude-sdk":
+        allowed = CLAUDE_MODELS
+        default = CLAUDE_MODELS[0]
+    else:
+        configured = settings_store.runtime("llm_chat_models")
+        allowed = configured if isinstance(configured, list) and configured else None
+        default = allowed[0] if allowed else _default_chat_model()
+        if allowed is None:
+            allowed = [default]
+    if model in allowed:
+        return model
+    return default
+
+
 async def stream_chat(
     system: str,
     history: list[dict],
     user_content: str,
     deps: ToolDeps,
+    model: str | None = None,
 ) -> AsyncIterator[dict]:
     """事件流：token* / reasoning* / tool* / context_chunks* → usage（最後一次）。"""
+    backend = settings_store.runtime("chat_backend") or "openai"
+    final_model = _resolve_model(backend, model)
+
+    # M8：後端分派（此處為唯一入口）。claude-sdk → 委派 claude_backend（同一事件協定）。
+    if backend == "claude-sdk":
+        from app.services import claude_backend
+
+        async for ev in claude_backend.stream_chat(
+            system, history, user_content, deps, model=final_model
+        ):
+            yield ev
+        return
+
     message_history = _to_history(history)
     with_tools = tools_pkg.build_toolset() is not None
     for attempt in range(_MAX_ATTEMPTS):
         think = ThinkFilter()
         visible = False  # 已對外輸出（token）→ 不可重試
         try:
-            agent = _build_agent(system, with_tools)
+            agent = _build_agent(system, with_tools, final_model)
             async with agent.run_stream_events(
                 user_content,
                 deps=deps,

@@ -33,3 +33,40 @@ class TestAllowedKeys:
     def test_whitelist_contents(self):
         assert "llm_api_key" in settings_store.ALLOWED_KEYS
         assert "custom_tools" not in settings_store.ALLOWED_KEYS
+
+    def test_claude_keys_allowed(self):
+        # M8：Claude Agent SDK 後端（訂閱額度，setup-token 貼碼）新鍵
+        assert "chat_backend" in settings_store.ALLOWED_KEYS
+        assert "claude_oauth_token" in settings_store.ALLOWED_KEYS
+        assert "claude_model" in settings_store.ALLOWED_KEYS
+
+    def test_llm_chat_models_allowed(self):
+        # M9：openai/NIM 來源可選模型清單（對話區下拉）
+        assert "llm_chat_models" in settings_store.ALLOWED_KEYS
+
+
+class TestClaudeSecretKeys:
+    def test_claude_token_is_secret(self):
+        assert "claude_oauth_token" in settings_store.SECRET_KEYS
+
+    def test_masked_view_only_exposes_set_booleans(self, monkeypatch):
+        monkeypatch.setattr(
+            settings_store,
+            "_cache",
+            {
+                "claude_oauth_token": "secret-access-token",
+                "claude_model": "sonnet",
+                "chat_backend": "claude-sdk",
+            },
+        )
+        view = settings_store.masked_view()
+        assert "claude_oauth_token" not in view
+        assert view["claude_oauth_token_set"] is True
+        # 非秘密鍵照常回顯
+        assert view["claude_model"] == "sonnet"
+        assert view["chat_backend"] == "claude-sdk"
+
+    def test_masked_view_false_when_absent(self, monkeypatch):
+        monkeypatch.setattr(settings_store, "_cache", {})
+        view = settings_store.masked_view()
+        assert view["claude_oauth_token_set"] is False

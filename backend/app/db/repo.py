@@ -433,7 +433,7 @@ async def create_conversation(
                 """
                 INSERT INTO conversations (scope, document_id, project_id, title)
                 VALUES (:scope, :doc_id, :pid, :title)
-                RETURNING id, scope, document_id, project_id, title, created_at
+                RETURNING id, scope, document_id, project_id, title, model, created_at
                 """
             ),
             {"scope": scope, "doc_id": document_id, "pid": project_id, "title": title},
@@ -453,7 +453,7 @@ async def list_conversations_scoped(
     rows = await session.execute(
         text(
             """
-            SELECT id, scope, document_id, project_id, title, created_at
+            SELECT id, scope, document_id, project_id, title, model, created_at
             FROM conversations
             WHERE scope = :scope
               AND (CAST(:doc_id AS bigint) IS NULL OR document_id = :doc_id)
@@ -471,7 +471,7 @@ async def get_conversation(session: AsyncSession, conv_id: int) -> dict | None:
         await session.execute(
             text(
                 """
-                SELECT id, scope, document_id, project_id, title, created_at
+                SELECT id, scope, document_id, project_id, title, model, created_at
                 FROM conversations WHERE id = :id
                 """
             ),
@@ -479,6 +479,17 @@ async def get_conversation(session: AsyncSession, conv_id: int) -> dict | None:
         )
     ).one_or_none()
     return _row_to_dict(row) if row else None
+
+
+async def set_conversation_model(
+    session: AsyncSession, conv_id: int, model: str | None
+) -> None:
+    """空字串或 None 存 NULL（回落來源預設）。"""
+    await session.execute(
+        text("UPDATE conversations SET model = :m WHERE id = :id"),
+        {"id": conv_id, "m": model or None},
+    )
+    await session.commit()
 
 
 async def add_message(

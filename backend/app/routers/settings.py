@@ -1,10 +1,14 @@
+from typing import Annotated
+
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app import settings_store
 from app.config import get_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+_ModelId = Annotated[str, StringConstraints(max_length=200)]
 
 
 class SettingsUpdate(BaseModel):
@@ -13,7 +17,13 @@ class SettingsUpdate(BaseModel):
     llm_base_url: str | None = Field(default=None, max_length=300)
     llm_api_key: str | None = Field(default=None, max_length=300)
     llm_chat_model: str | None = Field(default=None, max_length=200)
+    # M9：openai/NIM 來源可選模型清單（對話區下拉；設定頁只維護清單本身）
+    llm_chat_models: list[_ModelId] | None = Field(default=None)
     system_prompt_extra: str | None = Field(default=None, max_length=4000)
+    # M8：Claude Agent SDK 後端
+    chat_backend: str | None = Field(default=None, pattern=r"^(openai|claude-sdk)$")
+    # 進階退路：直接貼 `claude setup-token` 產出的長效 token
+    claude_oauth_token: str | None = Field(default=None, max_length=2000)
 
 
 def _view() -> dict:
@@ -23,6 +33,8 @@ def _view() -> dict:
     data["defaults"] = {
         "llm_base_url": env.llm_base_url,
         "llm_chat_model": env.llm_chat_model,
+        "llm_chat_models": [env.llm_chat_model],
+        "chat_backend": "openai",
     }
     return data
 
