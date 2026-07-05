@@ -11,6 +11,7 @@ import {
   Trash2,
   MessageCircleQuestion,
   PenLine,
+  Languages,
 } from "lucide-react";
 import styles from "./PDFPane.module.css";
 import {
@@ -27,6 +28,7 @@ import {
   type SelectionPreset,
 } from "../../stores/readerStore";
 import { useAnnotationStore } from "../../stores/annotationStore";
+import { useGlossaryStore } from "../../stores/glossaryStore";
 import { Library } from "../Library/Library";
 import { useT } from "../../i18n";
 import { rangeToBBoxList } from "./selectionBBox";
@@ -37,6 +39,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 /** 渲染寬度基準（zoom=100%）：頁面實際縮放 = renderWidth / 頁寬(pt) */
 const PAGE_WIDTH = 780;
 const MIN_SELECTION_CHARS = 8;
+/** 翻譯表條目適合「術語」：選取過長時停用「加入翻譯表」鈕 */
+const MAX_GLOSSARY_CHARS = 200;
 const ZOOM_MIN = 50;
 const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
@@ -124,6 +128,7 @@ export function PDFPane() {
   const setAnnotationColor = useAnnotationStore((s) => s.setColor);
   const updateAnnotationNote = useAnnotationStore((s) => s.updateNote);
   const removeAnnotation = useAnnotationStore((s) => s.remove);
+  const createGlossaryEntry = useGlossaryStore((s) => s.create);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<SelMenu | null>(null);
@@ -320,6 +325,21 @@ export function PDFPane() {
     [menu, annotColor, resolveChunkId, createAnnotation],
   );
 
+  /** 選單「加入翻譯表」：術語＋錨點送後端，後端同步翻譯後 store 會附上結果 */
+  const onAddToGlossary = useCallback(async () => {
+    if (!menu || !menu.bboxList || menu.page === null) return;
+    const { text, page, bboxList } = menu;
+    const chunkId = await resolveChunkId(text, page);
+    await createGlossaryEntry({
+      term: text.slice(0, MAX_GLOSSARY_CHARS),
+      page,
+      bbox_list: bboxList,
+      chunk_id: chunkId,
+    });
+    setMenu(null);
+    window.getSelection()?.removeAllRanges();
+  }, [menu, resolveChunkId, createGlossaryEntry]);
+
   /** 選單「加註解」：原位切換為 popover，帶著已捕捉的 bbox/page */
   const onOpenNote = useCallback(() => {
     if (!menu) return;
@@ -513,6 +533,14 @@ export function PDFPane() {
               title={menu.bboxList ? t.addNote : t.noteNoAnchor}
             >
               <MessageSquarePlus size={15} strokeWidth={2} />
+            </button>
+            <button
+              className={styles.selMenuIconBtn}
+              onClick={() => void onAddToGlossary()}
+              disabled={!menu.bboxList || menu.text.length > MAX_GLOSSARY_CHARS}
+              title={menu.bboxList ? t.addToGlossary : t.noteNoAnchor}
+            >
+              <Languages size={15} strokeWidth={2} />
             </button>
             <span className={styles.selMenuDivider} />
             <button onClick={() => void onAction("explain")}>{t.selExplain}</button>

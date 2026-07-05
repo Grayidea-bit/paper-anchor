@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import styles from "./RightPane.module.css";
 import { ChatPane } from "../ChatPane/ChatPane";
 import { NotesPane } from "../NotesPane/NotesPane";
+import { GlossaryPane } from "../GlossaryPane/GlossaryPane";
 import { useReaderStore } from "../../stores/readerStore";
 import { useAnnotationStore } from "../../stores/annotationStore";
+import { useGlossaryStore } from "../../stores/glossaryStore";
 import { useT } from "../../i18n";
 
-type RightTab = "chat" | "notes";
+type RightTab = "chat" | "notes" | "glossary";
 
 /**
  * 右欄容器：對話／筆記分頁籤。
@@ -17,12 +19,19 @@ export function RightPane() {
   const t = useT();
   const documentId = useReaderStore((s) => s.documentId);
   const annotationCount = useAnnotationStore((s) => s.annotations.length);
+  const glossaryCount = useGlossaryStore((s) => s.entries.length);
+  const loadGlossary = useGlossaryStore((s) => s.load);
   const [tab, setTab] = useState<RightTab>("chat");
 
   // 切換文獻時自動回到「對話」籤
   useEffect(() => {
     setTab("chat");
   }, [documentId]);
+
+  // 翻譯表：documentId 變更時載入（null 清空），比照 annotationStore.load 的觸發位置
+  useEffect(() => {
+    void loadGlossary(documentId);
+  }, [documentId, loadGlossary]);
 
   const notesAvailable = documentId !== null;
 
@@ -52,6 +61,19 @@ export function RightPane() {
             <span className={styles.tabCount}>({annotationCount})</span>
           </button>
         )}
+        {notesAvailable && (
+          <button
+            type="button"
+            role="tab"
+            className={styles.tab}
+            data-active={tab === "glossary"}
+            aria-selected={tab === "glossary"}
+            onClick={() => setTab("glossary")}
+          >
+            {t.tabGlossary}
+            <span className={styles.tabCount}>({glossaryCount})</span>
+          </button>
+        )}
       </div>
       <div className={styles.body}>
         <div
@@ -64,6 +86,13 @@ export function RightPane() {
             className={`${styles.tabPanel} ${tab === "notes" ? "" : styles.hidden}`}
           >
             <NotesPane />
+          </div>
+        )}
+        {notesAvailable && (
+          <div
+            className={`${styles.tabPanel} ${tab === "glossary" ? "" : styles.hidden}`}
+          >
+            <GlossaryPane />
           </div>
         )}
       </div>
