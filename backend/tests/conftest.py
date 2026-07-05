@@ -196,3 +196,91 @@ async def setup_test_document(
         chunk_id = result.scalar()
         await session.commit()
     return doc_id, chunk_id
+
+
+@pytest.fixture(scope="function")
+async def seeded_chunks(
+    test_db: tuple[async_sessionmaker, create_async_engine],
+) -> dict:
+    """
+    建立兩份文獻、各數個 chunks，page/bbox_list/chunk_index 互異。
+    供 repo 層 chunks_by_ids / chunks_by_indexes 測試使用（T-AN-08）。
+
+    回傳 {"doc_a": id, "doc_b": id, "chunks_a": [dict,...], "chunks_b": [dict,...]}
+    每個 chunk dict 含 id/chunk_index/page/bbox_list/content。
+    """
+    session_maker, _ = test_db
+    async with session_maker() as session:
+        doc_a = (
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO documents
+                        (user_id, title, filename, file_path, page_count, status)
+                    VALUES (1, 'Paper A', 'a.pdf', '/tmp/a.pdf', 10, 'ready')
+                    RETURNING id
+                    """
+                )
+            )
+        ).scalar()
+        doc_b = (
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO documents
+                        (user_id, title, filename, file_path, page_count, status)
+                    VALUES (1, 'Paper B', 'b.pdf', '/tmp/b.pdf', 10, 'ready')
+                    RETURNING id
+                    """
+                )
+            )
+        ).scalar()
+
+        async def _insert_chunks(doc_id: int, specs: list[tuple[int, int, list]]) -> list[dict]:
+            created = []
+            for chunk_index, page, bbox in specs:
+                result = await session.execute(
+                    text(
+                        """
+                        INSERT INTO chunks
+                            (document_id, chunk_index, page, section, content, bbox_list)
+                        VALUES (:doc_id, :chunk_index, :page, 'body', :content, :bbox_list)
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "doc_id": doc_id,
+                        "chunk_index": chunk_index,
+                        "page": page,
+                        "content": f"doc{doc_id} chunk{chunk_index} content",
+                        "bbox_list": json.dumps(bbox),
+                    },
+                )
+                cid = result.scalar()
+                created.append(
+                    {
+                        "id": cid,
+                        "chunk_index": chunk_index,
+                        "page": page,
+                        "bbox_list": bbox,
+                    }
+                )
+            return created
+
+        chunks_a = await _insert_chunks(
+            doc_a,
+            [
+                (0, 1, [[0, 0, 10, 10]]),
+                (1, 1, [[0, 10, 10, 20]]),
+                (2, 2, [[0, 20, 10, 30]]),
+            ],
+        )
+        chunks_b = await _insert_chunks(
+            doc_b,
+            [
+                (0, 5, [[100, 0, 110, 10]]),
+                (1, 6, [[100, 10, 110, 20]]),
+            ],
+        )
+        await session.commit()
+    return {"doc_a": doc_a, "doc_b": doc_b, "chunks_a": chunks_a, "chunks_b": chunks_b}

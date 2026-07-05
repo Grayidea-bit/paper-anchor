@@ -19,31 +19,6 @@ class FakeCtx:
     deps: ToolDeps
 
 
-async def _sqlite_chunks_by_ids(session, doc_id, ids):
-    """repo.chunks_by_ids 的 SQLite 相容替身：原函式用 Postgres 專用 ANY(:ids)，
-    測試 DB（SQLite）不支援，故測試改用逐筆 IN 查詢，回傳結構完全相同。"""
-    if not ids:
-        return []
-    result = []
-    for cid in ids:
-        row = (
-            await session.execute(
-                text(
-                    """
-                    SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
-                           c.content, c.bbox_list, d.title AS document_title
-                    FROM chunks c JOIN documents d ON d.id = c.document_id
-                    WHERE c.document_id = :doc_id AND c.id = :cid
-                    """
-                ),
-                {"doc_id": doc_id, "cid": cid},
-            )
-        ).one_or_none()
-        if row:
-            result.append(repo._row_to_dict(row))
-    return result
-
-
 @pytest.fixture
 async def two_docs(test_db):
     """建兩份文獻（各屬不同專案）、各一個 chunk，回傳其 id。"""
@@ -163,10 +138,7 @@ class TestListAnnotationsTool:
     async def test_document_scope_only_returns_that_document(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=seeded_annotations["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps))
         assert "Paper B" not in result.return_value
         assert result.return_value.count("《Paper A》") == 3
@@ -175,10 +147,7 @@ class TestListAnnotationsTool:
         """範圍隔離鐵證：project scope 不得洩漏其他專案文獻的標註。"""
         session_maker, _ = test_db
         deps = ToolDeps(scope="project", doc_id=None, project_id=1)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps))
         assert "Paper A" in result.return_value
         assert "Paper B" not in result.return_value
@@ -189,10 +158,7 @@ class TestListAnnotationsTool:
     async def test_project_scope_other_project(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="project", doc_id=None, project_id=2)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps))
         assert "Paper B" in result.return_value
         assert "Paper A" not in result.return_value
@@ -200,10 +166,7 @@ class TestListAnnotationsTool:
     async def test_type_filter_underline_only(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=seeded_annotations["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps), type_filter="underline")
         assert "畫線" in result.return_value
         assert "底色" not in result.return_value
@@ -213,20 +176,14 @@ class TestListAnnotationsTool:
     async def test_invalid_type_filter_falls_back_to_all(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=seeded_annotations["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps), type_filter="bogus")
         assert "找到 3 筆標註" in result.return_value
 
     async def test_chunk_citation_and_metadata_shape(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=seeded_annotations["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps))
         chunk_id = seeded_annotations["chunk_a"]
         assert f"[C{chunk_id}]" in result.return_value
@@ -242,20 +199,14 @@ class TestListAnnotationsTool:
     async def test_note_text_appended(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=seeded_annotations["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps), type_filter="highlight")
         assert "使用者註：這段很重要" in result.return_value
 
     async def test_note_type_selected_text_is_annotated_original(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=seeded_annotations["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps), type_filter="note")
         assert "被註解的原文" in result.return_value
         assert "使用者註：我的疑問" in result.return_value
@@ -263,10 +214,7 @@ class TestListAnnotationsTool:
     async def test_no_annotations_returns_fixed_message(self, test_db, two_docs):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=two_docs["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps))
         assert result.return_value == "目前範圍內沒有任何標註。"
         assert result.metadata is None
@@ -274,10 +222,7 @@ class TestListAnnotationsTool:
     async def test_library_scope_returns_all(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="library", doc_id=None, project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps))
         assert "Paper A" in result.return_value
         assert "Paper B" in result.return_value
@@ -286,10 +231,7 @@ class TestListAnnotationsTool:
     async def test_max_results_clamped(self, test_db, seeded_annotations):
         session_maker, _ = test_db
         deps = ToolDeps(scope="document", doc_id=seeded_annotations["doc_a"], project_id=None)
-        with (
-            patch("app.tools.list_annotations.SessionLocal", session_maker),
-            patch("app.db.repo.chunks_by_ids", _sqlite_chunks_by_ids),
-        ):
+        with patch("app.tools.list_annotations.SessionLocal", session_maker):
             result = await list_annotations(FakeCtx(deps=deps), max_results=0)
         # clamp 到 1 筆
         assert "找到 1 筆標註" in result.return_value

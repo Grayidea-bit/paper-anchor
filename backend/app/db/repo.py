@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 DEFAULT_USER_ID = 1
@@ -307,36 +307,32 @@ async def similar_chunks_scoped(
 async def chunks_by_indexes(session: AsyncSession, doc_id: int, indexes: list[int]) -> list[dict]:
     if not indexes:
         return []
-    rows = await session.execute(
-        text(
-            """
-            SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
-                   c.content, c.bbox_list, d.title AS document_title
-            FROM chunks c JOIN documents d ON d.id = c.document_id
-            WHERE c.document_id = :doc_id AND c.chunk_index = ANY(:indexes)
-            ORDER BY c.chunk_index
-            """
-        ),
-        {"doc_id": doc_id, "indexes": indexes},
-    )
+    stmt = text(
+        """
+        SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+               c.content, c.bbox_list, d.title AS document_title
+        FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE c.document_id = :doc_id AND c.chunk_index IN :indexes
+        ORDER BY c.chunk_index
+        """
+    ).bindparams(bindparam("indexes", expanding=True))
+    rows = await session.execute(stmt, {"doc_id": doc_id, "indexes": indexes})
     return [_row_to_dict(r) for r in rows]
 
 
 async def chunks_by_ids(session: AsyncSession, doc_id: int, ids: list[int]) -> list[dict]:
     if not ids:
         return []
-    rows = await session.execute(
-        text(
-            """
-            SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
-                   c.content, c.bbox_list, d.title AS document_title
-            FROM chunks c JOIN documents d ON d.id = c.document_id
-            WHERE c.document_id = :doc_id AND c.id = ANY(:ids)
-            ORDER BY c.chunk_index
-            """
-        ),
-        {"doc_id": doc_id, "ids": ids},
-    )
+    stmt = text(
+        """
+        SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+               c.content, c.bbox_list, d.title AS document_title
+        FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE c.document_id = :doc_id AND c.id IN :ids
+        ORDER BY c.chunk_index
+        """
+    ).bindparams(bindparam("ids", expanding=True))
+    rows = await session.execute(stmt, {"doc_id": doc_id, "ids": ids})
     return [_row_to_dict(r) for r in rows]
 
 
