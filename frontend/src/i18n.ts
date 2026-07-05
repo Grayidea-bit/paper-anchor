@@ -124,6 +124,7 @@ const DICT = {
     deleteAnnotation: "刪除",
     editNote: "編輯備註",
     addNoteToAnnotation: "補寫備註",
+    askAnnotation: "問 AI",
   },
   en: {
     appName: "Paper Anchor",
@@ -234,6 +235,7 @@ const DICT = {
     deleteAnnotation: "Delete",
     editNote: "Edit note",
     addNoteToAnnotation: "Add a note",
+    askAnnotation: "Ask AI",
   },
 } as const;
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import * as pdfjs from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
@@ -62,6 +63,48 @@ interface NotePopover {
   bboxList: BBox[] | null;
 }
 
+/** 點擊既有標註彈出的操作選單：定位 + 命中的標註本體 */
+interface AnnotMenu {
+  x: number;
+  y: number;
+  annotation: Annotation;
+}
+
+/** 編輯既有標註備註的 popover 狀態 */
+interface AnnotNotePopover {
+  x: number;
+  y: number;
+  annotationId: number;
+}
+
+/** 命中容差（pt）：底線/底色框太細，點擊時放寬邊界方便命中 */
+const HIT_TOLERANCE_PT = 2;
+
+/** 座標命中測試：clientX/clientY 是否落在某個標註的任一 bbox 內（含容差） */
+function hitTestAnnotations(
+  clientX: number,
+  clientY: number,
+  holder: HTMLElement,
+  pageAnnotations: Annotation[],
+): Annotation | null {
+  const scale = Number(holder.dataset.scale);
+  if (!Number.isFinite(scale) || scale <= 0) return null;
+  const holderRect = holder.getBoundingClientRect();
+  const px = (clientX - holderRect.left) / scale;
+  const py = (clientY - holderRect.top) / scale;
+  const tol = HIT_TOLERANCE_PT;
+  // annotations 已按 created_at 升冪排序；重疊時取「最晚建立」= 由後往前找第一個命中
+  for (let i = pageAnnotations.length - 1; i >= 0; i--) {
+    const annot = pageAnnotations[i];
+    for (const [x0, y0, x1, y1] of annot.bbox_list) {
+      if (px >= x0 - tol && px <= x1 + tol && py >= y0 - tol && py <= y1 + tol) {
+        return annot;
+      }
+    }
+  }
+  return null;
+}
+
 export function PDFPane() {
   const t = useT();
   const documentId = useReaderStore((s) => s.documentId);
@@ -71,11 +114,17 @@ export function PDFPane() {
   const annotations = useAnnotationStore((s) => s.annotations);
   const loadAnnotations = useAnnotationStore((s) => s.load);
   const createAnnotation = useAnnotationStore((s) => s.create);
+  const setAnnotationColor = useAnnotationStore((s) => s.setColor);
+  const updateAnnotationNote = useAnnotationStore((s) => s.updateNote);
+  const removeAnnotation = useAnnotationStore((s) => s.remove);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<SelMenu | null>(null);
   const [notePopover, setNotePopover] = useState<NotePopover | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [annotMenu, setAnnotMenu] = useState<AnnotMenu | null>(null);
+  const [annotNotePopover, setAnnotNotePopover] = useState<AnnotNotePopover | null>(null);
+  const [annotNoteText, setAnnotNoteText] = useState("");
   const chunksRef = useRef<Chunk[] | null>(null);
 
   // 工具列模式：cursor（預設，不持久化）/ underline / highlight
@@ -92,6 +141,8 @@ export function PDFPane() {
     setMode("cursor");
     setMenu(null);
     setNotePopover(null);
+    setAnnotMenu(null);
+    setAnnotNotePopover(null);
   }, [documentId]);
 
   useEffect(() => {
@@ -155,62 +206,91 @@ export function PDFPane() {
     [documentId],
   );
 
-  const onMouseUp = useCallback(() => {
-    // 等瀏覽器把 selection 定案再讀
-    requestAnimationFrame(() => {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) {
-        setMenu(null);
-        return;
-      }
-      const text = sel.toString().trim();
-      if (text.length < MIN_SELECTION_CHARS) {
-        setMenu(null);
-        return;
-      }
-      const range = sel.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      const start =
-        range.startContainer instanceof Element
-          ? range.startContainer
-          : range.startContainer.parentElement;
-      const holder = start?.closest("[data-page]") as HTMLElement | null;
-      if (!holder) {
-        setMenu(null);
-        return;
-      }
-      const page = Number(holder.dataset.page) || null;
-      // 按鈕點擊後 selection 會消失：bbox 必須在此刻（selection 定案時）捕捉
-      const anchor = rangeToBBoxList(range);
-      const bboxList = anchor?.bboxList ?? null;
-
-      if (mode === "underline" || mode === "highlight") {
-        if (!bboxList) return; // 換算失敗：靜默放棄，不建立
-        void (async () => {
-          const chunkId = await resolveChunkId(text, page);
-          await createAnnotation({
-            type: mode,
-            color: annotColor,
-            page: anchor!.page,
-            bbox_list: bboxList,
-            chunk_id: chunkId,
-            selected_text: text.slice(0, 3000),
+  const onMouseUp = useCallback(
+    (e: ReactMouseEvent) => {
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      // 等瀏覽器把 selection 定案再讀
+      requestAnimationFrame(() => {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed) {
+          setMenu(null);
+          // 單純點擊（非拖曳選字）：對點擊座標做標註命中測試
+          const target = document.elementFromPoint(clientX, clientY);
+          const clickHolder = target?.closest("[data-page]") as HTMLElement | null;
+          if (!clickHolder) {
+            setAnnotMenu(null);
+            return;
+          }
+          const clickPage = Number(clickHolder.dataset.page) || null;
+          const pageAnnotations =
+            clickPage !== null ? annotationsByPage.get(clickPage) ?? [] : [];
+          const hit = hitTestAnnotations(clientX, clientY, clickHolder, pageAnnotations);
+          if (!hit) {
+            setAnnotMenu(null);
+            return;
+          }
+          setNotePopover(null);
+          setAnnotNotePopover(null);
+          setAnnotMenu({
+            x: Math.min(Math.max(clientX, 120), window.innerWidth - 200),
+            y: Math.max(clientY - 44, 60),
+            annotation: hit,
           });
-          window.getSelection()?.removeAllRanges();
-        })();
-        return;
-      }
+          return;
+        }
+        setAnnotMenu(null);
+        setAnnotNotePopover(null);
+        const text = sel.toString().trim();
+        if (text.length < MIN_SELECTION_CHARS) {
+          setMenu(null);
+          return;
+        }
+        const range = sel.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const start =
+          range.startContainer instanceof Element
+            ? range.startContainer
+            : range.startContainer.parentElement;
+        const holder = start?.closest("[data-page]") as HTMLElement | null;
+        if (!holder) {
+          setMenu(null);
+          return;
+        }
+        const page = Number(holder.dataset.page) || null;
+        // 按鈕點擊後 selection 會消失：bbox 必須在此刻（selection 定案時）捕捉
+        const anchor = rangeToBBoxList(range);
+        const bboxList = anchor?.bboxList ?? null;
 
-      // cursor 模式：維持既有 SelMenu 行為
-      setMenu({
-        x: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 200),
-        y: Math.max(rect.top - 44, 60),
-        text,
-        page,
-        bboxList,
+        if (mode === "underline" || mode === "highlight") {
+          if (!bboxList) return; // 換算失敗：靜默放棄，不建立
+          void (async () => {
+            const chunkId = await resolveChunkId(text, page);
+            await createAnnotation({
+              type: mode,
+              color: annotColor,
+              page: anchor!.page,
+              bbox_list: bboxList,
+              chunk_id: chunkId,
+              selected_text: text.slice(0, 3000),
+            });
+            window.getSelection()?.removeAllRanges();
+          })();
+          return;
+        }
+
+        // cursor 模式：維持既有 SelMenu 行為
+        setMenu({
+          x: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 200),
+          y: Math.max(rect.top - 44, 60),
+          text,
+          page,
+          bboxList,
+        });
       });
-    });
-  }, [mode, annotColor, resolveChunkId, createAnnotation]);
+    },
+    [mode, annotColor, resolveChunkId, createAnnotation, annotationsByPage],
+  );
 
   const onAction = useCallback(
     async (preset: SelectionPreset) => {
@@ -256,6 +336,57 @@ export function PDFPane() {
     });
     closeNotePopover();
   }, [notePopover, noteText, annotColor, resolveChunkId, createAnnotation, closeNotePopover]);
+
+  /** 選單「換色」：即時套用，選單保持開啟讓使用者立刻看到效果 */
+  const onAnnotSetColor = useCallback(
+    (color: AnnotationColor) => {
+      if (!annotMenu) return;
+      void setAnnotationColor(annotMenu.annotation.id, color);
+      // 樂觀更新選單內顯示的當前色（store 更新為非同步，選單內容不等它）
+      setAnnotMenu((prev) =>
+        prev ? { ...prev, annotation: { ...prev.annotation, color } } : prev,
+      );
+    },
+    [annotMenu, setAnnotationColor],
+  );
+
+  /** 選單「問 AI」：帶標註原文（+ 備註）進右欄提問輸入框 */
+  const onAnnotAsk = useCallback(() => {
+    if (!annotMenu) return;
+    const { annotation } = annotMenu;
+    let text = annotation.selected_text;
+    if (annotation.note_text.trim()) {
+      text += `\n\n[備註] ${annotation.note_text}`;
+    }
+    requestSelectionAsk({ text: text.slice(0, 3000), chunkId: annotation.chunk_id, preset: "free" });
+    setAnnotMenu(null);
+  }, [annotMenu, requestSelectionAsk]);
+
+  /** 選單「編輯備註」/「補寫備註」：原位切換為 popover，預填既有 note_text */
+  const onAnnotOpenNote = useCallback(() => {
+    if (!annotMenu) return;
+    setAnnotNoteText(annotMenu.annotation.note_text);
+    setAnnotNotePopover({ x: annotMenu.x, y: annotMenu.y, annotationId: annotMenu.annotation.id });
+    setAnnotMenu(null);
+  }, [annotMenu]);
+
+  const closeAnnotNotePopover = useCallback(() => {
+    setAnnotNotePopover(null);
+    setAnnotNoteText("");
+  }, []);
+
+  const onSaveAnnotNote = useCallback(async () => {
+    if (!annotNotePopover) return;
+    await updateAnnotationNote(annotNotePopover.annotationId, annotNoteText.trim());
+    closeAnnotNotePopover();
+  }, [annotNotePopover, annotNoteText, updateAnnotationNote, closeAnnotNotePopover]);
+
+  /** 選單「刪除」：移除標註後關閉選單（渲染層/筆記面板經 store 自動同步） */
+  const onAnnotDelete = useCallback(() => {
+    if (!annotMenu) return;
+    void removeAnnotation(annotMenu.annotation.id);
+    setAnnotMenu(null);
+  }, [annotMenu, removeAnnotation]);
 
   // PDF 獨立縮放（只影響左欄；右欄對話零影響）
   const [zoom, setZoom] = useState(() => {
@@ -379,6 +510,60 @@ export function PDFPane() {
                 onClick={() => void onSaveNote()}
                 disabled={!noteText.trim() || !notePopover.bboxList}
               >
+                {t.save}
+              </button>
+            </div>
+            <span className={styles.selMenuArrow} />
+          </div>
+        )}
+        {annotMenu && (
+          <div
+            className={styles.selMenu}
+            style={{ left: annotMenu.x, top: annotMenu.y }}
+            onMouseUp={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <span className={styles.colorSwatches}>
+              {ANNOT_COLORS.map((c) => (
+                <button
+                  key={c}
+                  className={styles.colorSwatch}
+                  data-active={c === annotMenu.annotation.color || undefined}
+                  style={{ background: `var(--annot-${c})` }}
+                  aria-label={c}
+                  aria-pressed={c === annotMenu.annotation.color}
+                  onClick={() => onAnnotSetColor(c)}
+                />
+              ))}
+            </span>
+            <button className={styles.selMenuAsk} onClick={onAnnotAsk}>
+              {t.askAnnotation}
+            </button>
+            <button onClick={onAnnotOpenNote}>
+              {annotMenu.annotation.note_text.trim() ? t.editNote : t.addNoteToAnnotation}
+            </button>
+            <button onClick={onAnnotDelete}>{t.deleteAnnotation}</button>
+            <span className={styles.selMenuArrow} />
+          </div>
+        )}
+        {annotNotePopover && (
+          <div
+            className={styles.notePopover}
+            style={{ left: annotNotePopover.x, top: annotNotePopover.y }}
+            onMouseUp={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <textarea
+              className={styles.notePopoverTextarea}
+              value={annotNoteText}
+              onChange={(e) => setAnnotNoteText(e.target.value)}
+              placeholder={t.notePlaceholder}
+              autoFocus
+              rows={3}
+            />
+            <div className={styles.notePopoverActions}>
+              <button onClick={closeAnnotNotePopover}>{t.cancel}</button>
+              <button className={styles.notePopoverSave} onClick={() => void onSaveAnnotNote()}>
                 {t.save}
               </button>
             </div>
