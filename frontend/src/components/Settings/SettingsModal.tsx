@@ -265,23 +265,22 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             <h3 className={styles.sectionTitle} style={{ marginTop: 14 }}>
               {t.translationTargetLang}
             </h3>
-            <div className={styles.segmented}>
+            <input
+              className={styles.input}
+              type="text"
+              maxLength={60}
+              list="translation-lang-suggestions"
+              placeholder="繁體中文"
+              value={patch.translation_target_lang ?? view?.translation_target_lang ?? ""}
+              onChange={(e) =>
+                setPatch({ ...patch, translation_target_lang: e.target.value })
+              }
+            />
+            <datalist id="translation-lang-suggestions">
               {TRANSLATION_TARGET_LANG_OPTIONS.map((o) => (
-                <button
-                  key={o.value}
-                  className={
-                    (patch.translation_target_lang ??
-                      view?.translation_target_lang ??
-                      "繁體中文") === o.value
-                      ? styles.segActive
-                      : styles.segBtn
-                  }
-                  onClick={() => setPatch({ ...patch, translation_target_lang: o.value })}
-                >
-                  {o.label}
-                </button>
+                <option key={o.value} value={o.value} />
               ))}
-            </div>
+            </datalist>
           </section>
 
           {/* 工具 */}
