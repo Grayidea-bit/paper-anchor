@@ -142,8 +142,11 @@
 - [x] [sonnet] T-TR-01 翻譯表後端：migration 006 glossary_entries（同 annotations 錨定語言）、CRUD+retranslate 端點、`translation_target_lang` 設定鍵（預設繁體中文）、prompts/translate_term.md、services/glossary.py 走既有 llm.chat()（鐵律 3/4）；LLM 失敗降級存空譯文不 500。真 NIM 實測翻譯/換語言/重翻全過；順修 conftest async_client 的 SessionLocal patch 從未生效 bug。
 - [x] [haiku] T-TR-02 前端資料層：client GlossaryEntry+4 函式、glossaryStore（creating 旗標）、SettingsModal「翻譯目標語言」segmented（繁中/English/日本語）、i18n 8 鍵。
 - [x] [sonnet] T-TR-03 翻譯表 UI：SelMenu「加入翻譯表」（lucide Languages，>200 字 disabled）、右欄第三分頁〔對話|筆記|翻譯表(M)〕keep-mounted、GlossaryPane（術語|譯文兩欄、失敗重試、點列跳回原文、刪除、空狀態）。真 NIM 全流程瀏覽器實測通過。
-- **DoD**：✅ pytest **126 passed**、ruff/format 全綠、npm run build 過；migration 006 套用 dev DB。
-- 發現事項：settings 快取疑似要重啟 api 才讀到新 `translation_target_lang`（T-TR-01/03 都觀察到；已開 background task 卡追蹤，待查 settings_store 快取失效機制）。
+- [x] [sonnet] T-TR-04 條目從對話翻譯萃取：migration 007 加 notes 欄；POST 可帶 source_text（詳細翻譯全文）→ glossary_extract.md prompt 萃取「譯文/註解」兩行（解析失敗降級整段當譯文）；無 source_text 走原直翻。真 LLM 實測萃取正確、舊條目向後相容。
+- [x] [sonnet] T-TR-05 翻譯後加入（取代選單獨立 🌐 鈕，使用者拍板整合）：翻譯 preset 帶 anchor（page/bbox）→ 候選綁定該則回答（session 內）→ 回答下方「＋加入翻譯表」帶全文萃取 → ✓已加入；中斷回答不出鈕；GlossaryPane 顯示 notes。真 LLM 全流程實測。
+- [x] 翻譯目標語言改自由輸入（datalist 建議 + placeholder；任意字串直接進 prompt，空值後端回落預設）。
+- **DoD**：✅ pytest **135 passed**、ruff/format 全綠、npm run build 過；migrations 006/007 套用 dev DB。
+- 發現事項/修正：~~settings 疑似要重啟 api 才生效~~ → 根因是 **router SettingsUpdate 漏 `translation_target_lang` 欄位**（Pydantic 靜默丟棄未知欄位，PUT 200 但未持久化）——已修＋守護測試（白名單鍵必須有對應 router 欄位，防同類再發）；E2E 驗證 roundtrip 與英文翻譯生效。另 T-TR-01 順修 conftest `async_client` 的 SessionLocal patch 從未生效之既有 bug。
 
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
