@@ -152,3 +152,148 @@
 .rowSkeleton:hover {
   background: none;
 }
+
+/* ---- 條目懸浮視窗（視覺語言同 SettingsModal） ---- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal {
+  width: 480px;
+  max-width: calc(100vw - 40px);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-float);
+  animation: rise 0.18s ease;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.modalHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.modalPageTag {
+  flex: none;
+  font: 600 11px var(--mono);
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+.modalTitle {
+  flex: 1;
+  min-width: 0;
+  font: 600 15px var(--serif);
+  color: var(--text-strong);
+  word-break: break-word;
+}
+
+.modalClose {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.modalClose:hover {
+  color: var(--text-strong);
+}
+
+.modalBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.modalTranslation {
+  font: 700 15px var(--serif);
+  color: var(--text-strong);
+  line-height: 1.6;
+  word-break: break-word;
+  margin: 0 0 12px;
+}
+
+.modalFailedText {
+  font: 400 13px var(--sans);
+  color: var(--error);
+  margin: 0 0 12px;
+}
+
+.modalNotes {
+  border-top: 1px solid var(--divider-msg);
+  padding-top: 12px;
+}
+
+.modalActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--hairline);
+}
+
+.modalActionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font: 500 12px var(--sans);
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: color 0.13s ease, background-color 0.13s ease;
+}
+
+.modalActionBtn:hover {
+  color: var(--text-strong);
+  background: var(--hairline-strong);
+}
+
+.modalActionBtnDanger {
+  composes: modalActionBtn;
+  margin-left: auto;
+}
+
+.modalActionBtnDanger:hover {
+  color: var(--error);
+  background: var(--hairline-strong);
+}

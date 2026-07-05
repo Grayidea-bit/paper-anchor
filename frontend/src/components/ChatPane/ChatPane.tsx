@@ -33,6 +33,42 @@ import { projectColor } from "../Library/Library";
 
 /** 翻譯回答下方「加入翻譯表」候選：選取過長（>200 字）時不產生候選 */
 const MAX_GLOSSARY_TERM_CHARS = 200;
+const MAX_GLOSSARY_TRANSLATION_CHARS = 500;
+const MAX_GLOSSARY_NOTES_CHARS = 12000;
+
+/** 純標題行判定：整行去掉常見 markdown 標記後，等於「翻譯」/"Translation" 這類單詞標題 */
+const HEADING_ONLY_RE = /^(翻譯|譯文|translation)$/i;
+
+/** 剝除單行常見 markdown 標記：粗體/斜體、行首井字標題、行首 bullet／blockquote、反引號、包覆的引號 */
+function stripMarkdownInline(line: string): string {
+  return line
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^>+\s?/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim()
+    .replace(/^["「『]([\s\S]*)["」』]$/, "$1")
+    .trim();
+}
+
+/** 從翻譯回答全文抽第一行當譯文：跳過空行、純標題行、以及僅覆誦原術語本身的行
+ * （例如 LLM 常見的 `> "term"` 覆誦句，剝除引號/markdown 後與 term 相同就跳過），
+ * 剝除 markdown 標記後截斷。抽不到（全空）回傳 null，呼叫端 fallback 送 source_text。 */
+function extractFirstLineTranslation(content: string, term?: string): string | null {
+  const termNormalized = term?.trim().toLowerCase();
+  for (const raw of content.split("\n")) {
+    const stripped = stripMarkdownInline(raw);
+    if (!stripped) continue;
+    if (HEADING_ONLY_RE.test(stripped)) continue;
+    if (termNormalized && stripped.toLowerCase() === termNormalized) continue;
+    return stripped.slice(0, MAX_GLOSSARY_TRANSLATION_CHARS);
+  }
+  return null;
+}
 
 interface GlossaryCandidate {
   term: string;
@@ -378,7 +414,9 @@ function Chat({ context }: { context: ChatContext }) {
 
   const glossaryCreate = useGlossaryStore((s) => s.create);
 
-  /** 翻譯回答下方「＋ 加入翻譯表」：把該則回答全文帶給後端萃取譯文＋註解
+  /** 翻譯回答下方「＋ 加入翻譯表」：前端直接從回答全文抽第一行當譯文，notes 存全文，
+   * 帶 translation 給後端即可直存、不打 LLM，瞬間完成。抽不到譯文（全空）才 fallback
+   * 送 source_text 讓後端走舊的 LLM 萃取路徑。
    * glossaryStore.create 失敗時只 console.error 並吞掉例外（不 throw），
    * 故用建立前後的 entries 筆數變化判斷是否成功，藉此讓鈕恢復可重試。 */
   const addAnswerToGlossary = useCallback(
@@ -390,12 +428,15 @@ function Chat({ context }: { context: ChatContext }) {
         prev.map((m, i) => (i === index ? { ...m, glossaryStatus: "adding" } : m)),
       );
       const before = useGlossaryStore.getState().entries.length;
+      const translation = extractFirstLineTranslation(target.content, candidate.term);
       await glossaryCreate({
         term: candidate.term,
         page: candidate.page,
         bbox_list: candidate.bboxList,
         chunk_id: candidate.chunkId,
-        source_text: target.content.slice(0, 8000),
+        ...(translation !== null
+          ? { translation, notes: target.content.slice(0, MAX_GLOSSARY_NOTES_CHARS) }
+          : { source_text: target.content.slice(0, 8000) }),
       });
       const succeeded = useGlossaryStore.getState().entries.length > before;
       setMessages((prev) =>
@@ -712,6 +753,16 @@ function MarkdownWithCitations({ content, citations, onCite }: ContentProps) {
       >
         {prepared}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+/** 純 markdown 渲染（無引用 chip）：供翻譯表懸浮視窗顯示 notes 全文用，
+ * 沿用 ChatPane 同一套 react-markdown + remark-gfm + .md 樣式，維持視覺一致。 */
+export function SimpleMarkdown({ content }: { content: string }) {
+  return (
+    <div className={styles.md}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
 }

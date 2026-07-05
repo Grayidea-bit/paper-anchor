@@ -130,8 +130,12 @@ export interface GlossaryCreate {
   page: number;
   bbox_list: BBox[];
   chunk_id: number | null;
-  /** 詳細翻譯回答全文（≤8000）：帶了後端會萃取簡潔譯文＋白話註解 */
+  /** 詳細翻譯回答全文（≤8000）：帶了後端會萃取簡潔譯文＋白話註解（僅在未帶 translation 時使用） */
   source_text?: string;
+  /** 前端直接抽取的譯文（≤500）：帶了後端直存，不打 LLM */
+  translation?: string;
+  /** 回答全文（markdown，≤12000）：搭配 translation 一起直存 */
+  notes?: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
