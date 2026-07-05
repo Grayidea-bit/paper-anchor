@@ -26,6 +26,8 @@ export const useGlossaryStore = create<GlossaryState>((set, get) => ({
     }
     try {
       const entries = await api.listGlossary(documentId);
+      // 使用者可能在等待期間切換文獻——stale 回應直接丟棄
+      if (get().documentId !== documentId) return;
       // 排序：page 升冪、created_at 升冪
       const sorted = [...entries].sort((a, b) => {
         if (a.page !== b.page) return a.page - b.page;
@@ -34,21 +36,26 @@ export const useGlossaryStore = create<GlossaryState>((set, get) => ({
       set({ entries: sorted, loading: false });
     } catch (err) {
       console.error("Failed to load glossary:", err);
+      if (get().documentId !== documentId) return;
       set({ entries: [], loading: false });
     }
   },
 
   create: async (input) => {
-    const state = get();
-    if (state.documentId === null) {
+    const documentId = get().documentId;
+    if (documentId === null) {
       console.error("Cannot create glossary entry: no documentId set");
       return;
     }
     set({ creating: true });
     try {
-      const entry = await api.createGlossaryEntry(state.documentId, input);
-      // append 且保持排序
-      const updated = [...state.entries, entry].sort((a, b) => {
+      const entry = await api.createGlossaryEntry(documentId, input);
+      if (get().documentId !== documentId) {
+        set({ creating: false });
+        return;
+      }
+      // append 基於 resolve 當下列表（併發建立不互相覆蓋）且保持排序
+      const updated = [...get().entries, entry].sort((a, b) => {
         if (a.page !== b.page) return a.page - b.page;
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       });

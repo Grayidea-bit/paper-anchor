@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import type { AnnotationColor } from "../../api/client";
 import styles from "./PDFPane.module.css";
 
-const ANNOT_COLORS: AnnotationColor[] = ["amber", "terracotta", "sage", "slate"];
+export const ANNOT_COLORS: AnnotationColor[] = ["amber", "terracotta", "sage", "slate"];
 
 /**
  * 共用選色元件：平常只顯示「當前色」單顆圓點；點擊展開 4 色可選。

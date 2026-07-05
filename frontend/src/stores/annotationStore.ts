@@ -25,6 +25,8 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
     }
     try {
       const annotations = await api.listAnnotations(documentId);
+      // 使用者可能在等待期間切換文獻——stale 回應直接丟棄
+      if (get().documentId !== documentId) return;
       // 排序：page 升冪、created_at 升冪
       const sorted = [...annotations].sort((a, b) => {
         if (a.page !== b.page) return a.page - b.page;
@@ -33,20 +35,22 @@ export const useAnnotationStore = create<AnnotationState>((set, get) => ({
       set({ annotations: sorted, loading: false });
     } catch (err) {
       console.error("Failed to load annotations:", err);
+      if (get().documentId !== documentId) return;
       set({ annotations: [], loading: false });
     }
   },
 
   create: async (input) => {
-    const state = get();
-    if (state.documentId === null) {
+    const documentId = get().documentId;
+    if (documentId === null) {
       console.error("Cannot create annotation: no documentId set");
       return;
     }
     try {
-      const annotation = await api.createAnnotation(state.documentId, input);
-      // append 且保持排序
-      const updated = [...state.annotations, annotation].sort((a, b) => {
+      const annotation = await api.createAnnotation(documentId, input);
+      if (get().documentId !== documentId) return;
+      // append 基於 resolve 當下列表（併發建立不互相覆蓋）且保持排序
+      const updated = [...get().annotations, annotation].sort((a, b) => {
         if (a.page !== b.page) return a.page - b.page;
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       });

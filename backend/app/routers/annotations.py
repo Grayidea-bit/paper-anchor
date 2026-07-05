@@ -35,11 +35,8 @@ class AnnotationUpdate(BaseModel):
 async def list_annotations(document_id: int) -> list[dict]:
     """列出某文獻的所有標註。"""
     async with SessionLocal() as session:
-        # 驗證文獻存在
-        doc = await repo.get_document(session, document_id)
-    if doc is None:
-        raise NotFoundError("document", document_id)
-    async with SessionLocal() as session:
+        if await repo.get_document(session, document_id) is None:
+            raise NotFoundError("document", document_id)
         return await repo.list_annotations(session, document_id)
 
 
@@ -47,11 +44,8 @@ async def list_annotations(document_id: int) -> list[dict]:
 async def create_annotation(document_id: int, body: AnnotationCreate) -> dict:
     """建立新標註。"""
     async with SessionLocal() as session:
-        # 驗證文獻存在
-        doc = await repo.get_document(session, document_id)
-    if doc is None:
-        raise NotFoundError("document", document_id)
-    async with SessionLocal() as session:
+        if await repo.get_document(session, document_id) is None:
+            raise NotFoundError("document", document_id)
         return await repo.create_annotation(
             session,
             document_id,

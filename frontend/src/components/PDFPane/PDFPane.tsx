@@ -30,7 +30,7 @@ import { useAnnotationStore } from "../../stores/annotationStore";
 import { Library } from "../Library/Library";
 import { useT } from "../../i18n";
 import { rangeToBBoxList } from "./selectionBBox";
-import { ColorDots } from "./ColorDots";
+import { ANNOT_COLORS, ColorDots } from "./ColorDots";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -42,7 +42,6 @@ const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
 /** 穩定的空陣列參照：無標註的頁面共用同一個，避免每次 render 產生新 [] */
 const EMPTY_ANNOTATIONS: Annotation[] = [];
-const ANNOT_COLORS: AnnotationColor[] = ["amber", "terracotta", "sage", "slate"];
 const DEFAULT_ANNOT_COLOR: AnnotationColor = "amber";
 
 function loadAnnotColor(): AnnotationColor {

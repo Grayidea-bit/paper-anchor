@@ -27,10 +27,8 @@ class GlossaryCreate(BaseModel):
 async def list_glossary(document_id: int) -> list[dict]:
     """列出某文獻的翻譯表條目。"""
     async with SessionLocal() as session:
-        doc = await repo.get_document(session, document_id)
-    if doc is None:
-        raise NotFoundError("document", document_id)
-    async with SessionLocal() as session:
+        if await repo.get_document(session, document_id) is None:
+            raise NotFoundError("document", document_id)
         return await repo.list_glossary_entries(session, document_id)
 
 
@@ -46,10 +44,8 @@ async def create_glossary_entry(document_id: int, body: GlossaryCreate) -> dict:
     LLM 失敗降級為空字串，條目仍建立。
     """
     async with SessionLocal() as session:
-        doc = await repo.get_document(session, document_id)
-    if doc is None:
-        raise NotFoundError("document", document_id)
-    async with SessionLocal() as session:
+        if await repo.get_document(session, document_id) is None:
+            raise NotFoundError("document", document_id)
         return await glossary_service.create_entry(
             session,
             document_id,
