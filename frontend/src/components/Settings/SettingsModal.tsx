@@ -12,7 +12,13 @@ import {
   type ToolInfo,
   type Usage,
 } from "../../api/client";
-import { LANG_OPTIONS, THEME_OPTIONS, useT, useUiStore } from "../../i18n";
+import {
+  LANG_OPTIONS,
+  THEME_OPTIONS,
+  TRANSLATION_TARGET_LANG_OPTIONS,
+  useT,
+  useUiStore,
+} from "../../i18n";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const t = useT();
@@ -253,6 +259,26 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                   onClick={() => setTheme(o.value)}
                 >
                   {t[o.labelKey]}
+                </button>
+              ))}
+            </div>
+            <h3 className={styles.sectionTitle} style={{ marginTop: 14 }}>
+              {t.translationTargetLang}
+            </h3>
+            <div className={styles.segmented}>
+              {TRANSLATION_TARGET_LANG_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  className={
+                    (patch.translation_target_lang ??
+                      view?.translation_target_lang ??
+                      "繁體中文") === o.value
+                      ? styles.segActive
+                      : styles.segBtn
+                  }
+                  onClick={() => setPatch({ ...patch, translation_target_lang: o.value })}
+                >
+                  {o.label}
                 </button>
               ))}
             </div>

@@ -110,6 +110,27 @@ export interface AnnotationCreate {
   note_text?: string;
 }
 
+// ---- glossary ----
+
+export interface GlossaryEntry {
+  id: number;
+  document_id: number;
+  term: string;
+  translation: string;
+  target_lang: string;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+  created_at: string;
+}
+
+export interface GlossaryCreate {
+  term: string;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, init);
   if (!resp.ok) {
@@ -162,6 +183,7 @@ export interface SettingsView {
   system_prompt_extra?: string;
   chat_backend?: ChatBackend;
   claude_oauth_token_set: boolean;
+  translation_target_lang?: string;
   defaults: {
     llm_base_url: string;
     llm_chat_model: string;
@@ -178,6 +200,7 @@ export interface SettingsPatch {
   system_prompt_extra?: string;
   chat_backend?: ChatBackend;
   claude_oauth_token?: string;
+  translation_target_lang?: string;
 }
 
 export interface ToolInfo {
@@ -455,4 +478,30 @@ export function updateAnnotation(
 
 export function deleteAnnotation(id: number): Promise<void> {
   return request<void>(`/api/annotations/${id}`, { method: "DELETE" });
+}
+
+export function listGlossary(documentId: number): Promise<GlossaryEntry[]> {
+  return request<GlossaryEntry[]>(`/api/documents/${documentId}/glossary`);
+}
+
+export function createGlossaryEntry(
+  documentId: number,
+  input: GlossaryCreate,
+): Promise<GlossaryEntry> {
+  return request<GlossaryEntry>(`/api/documents/${documentId}/glossary`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function retranslateGlossaryEntry(id: number): Promise<GlossaryEntry> {
+  return request<GlossaryEntry>(`/api/glossary/${id}/retranslate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export function deleteGlossaryEntry(id: number): Promise<void> {
+  return request<void>(`/api/glossary/${id}`, { method: "DELETE" });
 }

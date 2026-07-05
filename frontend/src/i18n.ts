@@ -14,6 +14,12 @@ export const THEME_OPTIONS: { value: Theme; labelKey: "themeDark" | "themeLight"
   { value: "light", labelKey: "themeLight" },
 ];
 
+export const TRANSLATION_TARGET_LANG_OPTIONS: { value: string; label: string }[] = [
+  { value: "繁體中文", label: "繁體中文" },
+  { value: "English", label: "English" },
+  { value: "日本語", label: "日本語" },
+];
+
 const DICT = {
   "zh-TW": {
     appName: "Paper Anchor · 文獻導讀",
@@ -122,12 +128,20 @@ const DICT = {
     noteNoAnchor: "無法定位這段選取，換一段文字再加註解。",
     tabChat: "對話",
     tabNotes: "筆記",
+    tabGlossary: "翻譯表",
     notesEmpty:
       "還沒有任何標註。用工具列的底線／底色模式，或選取文字加註解。",
     deleteAnnotation: "刪除",
     editNote: "編輯備註",
     addNoteToAnnotation: "補寫備註",
     askAnnotation: "問 AI",
+    addToGlossary: "加入翻譯表",
+    glossaryEmpty: "還沒有翻譯條目。圈選術語後點「加入翻譯表」。",
+    translationTargetLang: "翻譯目標語言",
+    retranslate: "重新翻譯",
+    translating: "翻譯中…",
+    translationFailed: "翻譯失敗",
+    deleteEntry: "刪除",
   },
   en: {
     appName: "Paper Anchor",
@@ -236,12 +250,20 @@ const DICT = {
     noteNoAnchor: "Couldn't locate this selection — pick another passage to annotate.",
     tabChat: "Chat",
     tabNotes: "Notes",
+    tabGlossary: "Glossary",
     notesEmpty:
       "No annotations yet. Use the underline/highlight modes or select text to add a note.",
     deleteAnnotation: "Delete",
     editNote: "Edit note",
     addNoteToAnnotation: "Add a note",
     askAnnotation: "Ask AI",
+    addToGlossary: "Add to glossary",
+    glossaryEmpty: "No entries yet. Select a term and click \"Add to glossary\".",
+    translationTargetLang: "Translation target language",
+    retranslate: "Retranslate",
+    translating: "Translating…",
+    translationFailed: "Translation failed",
+    deleteEntry: "Delete",
   },
 } as const;
 
