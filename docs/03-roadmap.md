@@ -120,6 +120,17 @@
     - 無 model 新對話、settings 不含 llm_chat_models 時，無報錯且能以預設模型對話
   - digest 與 healthz 用 llm 預設鏈，對話記錄鎖定為 conversations.model
 
+### M10 — 使用者標註（底線／底色／註解 + 筆記面板 + AI 讀取標註）2026-07-05
+- **目標**：PDF 工具列模式化〔游標｜底線｜底色｜縮放〕+ 4 色盤；游標選單加「加註解」；右欄「對話/筆記」分頁籤，筆記可跳回圈選範圍；`list_annotations` 工具讓 AI 總結使用者畫線重點。設計全文見計畫檔（annotations 表複用 page+bbox_list 座標語言，與引用鏈同構、零接觸）。
+- [ ] [haiku] T-AN-01 資料層+API：migration 005_annotations、repo CRUD+scoped、routers/annotations.py、docs §4/§5/D8、tests/test_annotations.py
+- [ ] [haiku] T-AN-02 前端 API+store：client.ts Annotation types+4 函式、annotationStore.ts、i18n 字串（依賴 01 介面）
+- [ ] [opus] T-AN-03 座標換算+渲染層：selectionBBox.ts（DOM rects → PDF pt、清洗合併）、PageCanvas data-scale、三種標註樣式、與 citation 高亮共存（依賴 02）
+- [ ] [sonnet] T-AN-04 工具列+建立流程：模式切換 UI、色盤、underline/highlight 直接建立、「加註解」popover（依賴 03）
+- [ ] [sonnet] T-AN-05 筆記面板：RightPane 分頁籤（ChatPane keep-mounted）、NotesPane 列表/跳轉/刪除/編輯（依賴 02，可與 03/04 並行）
+- [ ] [sonnet] T-AN-06 list_annotations 工具：app/tools/ + repo scoped 查詢 + tests mock（依賴 01）
+- [ ] [opus] T-AN-07 整合審查+回歸：全鏈驗收、eval_citations 回歸、雙主題目測、本節勾選
+- **DoD**：pytest 全綠（annotations CRUD/422/級聯 + 工具 scope 隔離）、`npm run build` 過、eval_citations 不退化；手動驗收：三檔 zoom 標註對齊、重載原位重現、串流中切筆記籤不斷線、點筆記跳頁高亮命中。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown
