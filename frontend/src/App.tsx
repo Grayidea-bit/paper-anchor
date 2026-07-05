@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import styles from "./App.module.css";
-import { ChatPane } from "./components/ChatPane/ChatPane";
 import { PDFPane } from "./components/PDFPane/PDFPane";
+import { RightPane } from "./components/RightPane/RightPane";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { getDocument, getHealth, type Doc, type Health } from "./api/client";
 import { useReaderStore } from "./stores/readerStore";
@@ -61,7 +61,7 @@ export default function App() {
       </header>
       <main className={styles.panes}>
         <PDFPane />
-        <ChatPane />
+        <RightPane />
       </main>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
