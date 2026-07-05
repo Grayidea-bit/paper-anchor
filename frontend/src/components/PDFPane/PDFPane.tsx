@@ -4,6 +4,14 @@ import * as pdfjs from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import {
+  Underline as UnderlineIcon,
+  Highlighter as HighlighterIcon,
+  MessageSquarePlus,
+  Trash2,
+  MessageCircleQuestion,
+  PenLine,
+} from "lucide-react";
 import styles from "./PDFPane.module.css";
 import {
   documentFileUrl,
@@ -22,6 +30,7 @@ import { useAnnotationStore } from "../../stores/annotationStore";
 import { Library } from "../Library/Library";
 import { useT } from "../../i18n";
 import { rangeToBBoxList } from "./selectionBBox";
+import { ColorDots } from "./ColorDots";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -33,8 +42,6 @@ const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
 /** 穩定的空陣列參照：無標註的頁面共用同一個，避免每次 render 產生新 [] */
 const EMPTY_ANNOTATIONS: Annotation[] = [];
-/** 標註工具模式：cursor=維持既有選取選單；underline/highlight=直接建立標註 */
-type AnnotMode = "cursor" | "underline" | "highlight";
 const ANNOT_COLORS: AnnotationColor[] = ["amber", "terracotta", "sage", "slate"];
 const DEFAULT_ANNOT_COLOR: AnnotationColor = "amber";
 
@@ -127,8 +134,6 @@ export function PDFPane() {
   const [annotNoteText, setAnnotNoteText] = useState("");
   const chunksRef = useRef<Chunk[] | null>(null);
 
-  // 工具列模式：cursor（預設，不持久化）/ underline / highlight
-  const [mode, setMode] = useState<AnnotMode>("cursor");
   // 標註顏色：持久化於 localStorage
   const [annotColor, setAnnotColor] = useState<AnnotationColor>(() => loadAnnotColor());
   const changeAnnotColor = useCallback((color: AnnotationColor) => {
@@ -136,9 +141,8 @@ export function PDFPane() {
     localStorage.setItem("annot_color", color);
   }, []);
 
-  // 文獻切換/關閉：模式重置回 cursor
+  // 文獻切換/關閉：關閉所有浮動選單/popover
   useEffect(() => {
-    setMode("cursor");
     setMenu(null);
     setNotePopover(null);
     setAnnotMenu(null);
@@ -262,24 +266,7 @@ export function PDFPane() {
         const anchor = rangeToBBoxList(range);
         const bboxList = anchor?.bboxList ?? null;
 
-        if (mode === "underline" || mode === "highlight") {
-          if (!bboxList) return; // 換算失敗：靜默放棄，不建立
-          void (async () => {
-            const chunkId = await resolveChunkId(text, page);
-            await createAnnotation({
-              type: mode,
-              color: annotColor,
-              page: anchor!.page,
-              bbox_list: bboxList,
-              chunk_id: chunkId,
-              selected_text: text.slice(0, 3000),
-            });
-            window.getSelection()?.removeAllRanges();
-          })();
-          return;
-        }
-
-        // cursor 模式：維持既有 SelMenu 行為
+        // 先圈選、再從 SelMenu 決定動作（底線／背景／加註解／AI 動作）
         setMenu({
           x: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 200),
           y: Math.max(rect.top - 44, 60),
@@ -289,7 +276,7 @@ export function PDFPane() {
         });
       });
     },
-    [mode, annotColor, resolveChunkId, createAnnotation, annotationsByPage],
+    [annotationsByPage],
   );
 
   const onAction = useCallback(
@@ -301,6 +288,26 @@ export function PDFPane() {
       window.getSelection()?.removeAllRanges();
     },
     [menu, resolveChunkId, requestSelectionAsk],
+  );
+
+  /** 選單「底線」／「背景色」：直接用當前色建立標註，沿用選取當下捕捉的 bbox */
+  const onCreateAnnotation = useCallback(
+    async (type: "underline" | "highlight") => {
+      if (!menu || !menu.bboxList || menu.page === null) return;
+      const { text, page, bboxList } = menu;
+      const chunkId = await resolveChunkId(text, page);
+      await createAnnotation({
+        type,
+        color: annotColor,
+        page,
+        bbox_list: bboxList,
+        chunk_id: chunkId,
+        selected_text: text.slice(0, 3000),
+      });
+      setMenu(null);
+      window.getSelection()?.removeAllRanges();
+    },
+    [menu, annotColor, resolveChunkId, createAnnotation],
   );
 
   /** 選單「加註解」：原位切換為 popover，帶著已捕捉的 bbox/page */
@@ -350,15 +357,15 @@ export function PDFPane() {
     [annotMenu, setAnnotationColor],
   );
 
-  /** 選單「問 AI」：帶標註原文（+ 備註）進右欄提問輸入框 */
+  /** 選單「問 AI」：只帶標註的選取原文（不附加備註）進右欄提問輸入框 */
   const onAnnotAsk = useCallback(() => {
     if (!annotMenu) return;
     const { annotation } = annotMenu;
-    let text = annotation.selected_text;
-    if (annotation.note_text.trim()) {
-      text += `\n\n[備註] ${annotation.note_text}`;
-    }
-    requestSelectionAsk({ text: text.slice(0, 3000), chunkId: annotation.chunk_id, preset: "free" });
+    requestSelectionAsk({
+      text: annotation.selected_text.slice(0, 3000),
+      chunkId: annotation.chunk_id,
+      preset: "free",
+    });
     setAnnotMenu(null);
   }, [annotMenu, requestSelectionAsk]);
 
@@ -444,7 +451,6 @@ export function PDFPane() {
       <section
         className={styles.pane}
         aria-label="文獻閱讀器"
-        data-mode={mode}
         onMouseUp={onMouseUp}
         onScroll={onScroll}
         ref={(el) => {
@@ -473,14 +479,37 @@ export function PDFPane() {
             style={{ left: menu.x, top: menu.y }}
             onMouseUp={(e) => e.stopPropagation()}
           >
+            <button
+              className={styles.selMenuIconBtn}
+              onClick={() => void onCreateAnnotation("underline")}
+              disabled={!menu.bboxList}
+              title={menu.bboxList ? t.underline : t.noteNoAnchor}
+            >
+              <UnderlineIcon size={15} strokeWidth={2} />
+            </button>
+            <button
+              className={styles.selMenuIconBtn}
+              onClick={() => void onCreateAnnotation("highlight")}
+              disabled={!menu.bboxList}
+              title={menu.bboxList ? t.highlightMode : t.noteNoAnchor}
+            >
+              <HighlighterIcon size={15} strokeWidth={2} />
+            </button>
+            <ColorDots current={annotColor} onChange={changeAnnotColor} title={t.annotColor} />
+            <button
+              className={styles.selMenuIconBtn}
+              onClick={onOpenNote}
+              disabled={!menu.bboxList}
+              title={menu.bboxList ? t.addNote : t.noteNoAnchor}
+            >
+              <MessageSquarePlus size={15} strokeWidth={2} />
+            </button>
+            <span className={styles.selMenuDivider} />
             <button onClick={() => void onAction("explain")}>{t.selExplain}</button>
             <button onClick={() => void onAction("translate")}>{t.selTranslate}</button>
             <button onClick={() => void onAction("critique")}>{t.selCritique}</button>
             <button className={styles.selMenuAsk} onClick={() => void onAction("free")}>
               {t.selAsk}…
-            </button>
-            <button onClick={onOpenNote} disabled={!menu.bboxList} title={menu.bboxList ? undefined : t.noteNoAnchor}>
-              {t.addNote}
             </button>
             <span className={styles.selMenuArrow} />
           </div>
@@ -523,26 +552,24 @@ export function PDFPane() {
             onMouseUp={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <span className={styles.colorSwatches}>
-              {ANNOT_COLORS.map((c) => (
-                <button
-                  key={c}
-                  className={styles.colorSwatch}
-                  data-active={c === annotMenu.annotation.color || undefined}
-                  style={{ background: `var(--annot-${c})` }}
-                  aria-label={c}
-                  aria-pressed={c === annotMenu.annotation.color}
-                  onClick={() => onAnnotSetColor(c)}
-                />
-              ))}
-            </span>
-            <button className={styles.selMenuAsk} onClick={onAnnotAsk}>
-              {t.askAnnotation}
+            <ColorDots current={annotMenu.annotation.color} onChange={onAnnotSetColor} title={t.annotColor} />
+            <button
+              className={styles.selMenuIconBtn}
+              onClick={onAnnotAsk}
+              title={t.askAnnotation}
+            >
+              <MessageCircleQuestion size={15} strokeWidth={2} />
             </button>
-            <button onClick={onAnnotOpenNote}>
-              {annotMenu.annotation.note_text.trim() ? t.editNote : t.addNoteToAnnotation}
+            <button
+              className={styles.selMenuIconBtn}
+              onClick={onAnnotOpenNote}
+              title={annotMenu.annotation.note_text.trim() ? t.editNote : t.addNoteToAnnotation}
+            >
+              <PenLine size={15} strokeWidth={2} />
             </button>
-            <button onClick={onAnnotDelete}>{t.deleteAnnotation}</button>
+            <button className={styles.selMenuIconBtn} onClick={onAnnotDelete} title={t.deleteAnnotation}>
+              <Trash2 size={15} strokeWidth={2} />
+            </button>
             <span className={styles.selMenuArrow} />
           </div>
         )}
@@ -578,48 +605,6 @@ export function PDFPane() {
       )}
       {pdf && (
         <span className={styles.toolBar}>
-          <button
-            className={styles.modeBtn}
-            aria-pressed={mode === "cursor"}
-            data-active={mode === "cursor" || undefined}
-            title={t.cursor}
-            onClick={() => setMode("cursor")}
-          >
-            {t.cursor}
-          </button>
-          <button
-            className={styles.modeBtn}
-            aria-pressed={mode === "underline"}
-            data-active={mode === "underline" || undefined}
-            title={t.underline}
-            onClick={() => setMode("underline")}
-          >
-            {t.underline}
-          </button>
-          <button
-            className={styles.modeBtn}
-            aria-pressed={mode === "highlight"}
-            data-active={mode === "highlight" || undefined}
-            title={t.highlightMode}
-            onClick={() => setMode("highlight")}
-          >
-            {t.highlightMode}
-          </button>
-          <span className={styles.toolBarDivider} />
-          <span className={styles.colorSwatches}>
-            {ANNOT_COLORS.map((c) => (
-              <button
-                key={c}
-                className={styles.colorSwatch}
-                data-active={c === annotColor || undefined}
-                style={{ background: `var(--annot-${c})` }}
-                aria-label={c}
-                aria-pressed={c === annotColor}
-                onClick={() => changeAnnotColor(c)}
-              />
-            ))}
-          </span>
-          <span className={styles.toolBarDivider} />
           <button onClick={() => changeZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>
             −
           </button>

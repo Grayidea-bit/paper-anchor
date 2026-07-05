@@ -71,7 +71,7 @@
   z-index: 5;
 }
 
-/* ---- 工具列（模式切換 + 色盤 + 縮放） ---- */
+/* ---- 工具列（縮放） ---- */
 
 .toolBar {
   position: absolute;
@@ -111,23 +111,6 @@
   min-width: 46px;
 }
 
-.toolBarDivider {
-  width: 1px;
-  align-self: stretch;
-  margin: 8px 2px;
-  background: var(--hairline-strong);
-}
-
-.modeBtn {
-  font: 500 12px var(--sans) !important;
-  border-radius: 14px;
-}
-
-.modeBtn[data-active] {
-  color: var(--text-strong);
-  background: var(--hover-row);
-}
-
 .colorSwatches {
   display: flex;
   align-items: center;
@@ -152,6 +135,14 @@
 .colorSwatch[data-active] {
   border-color: var(--text-strong) !important;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-panel) 80%, transparent);
+}
+
+/* 選單內「當前色」單顆圓點：點擊展開 4 色（ColorDots 元件） */
+.colorDotToggle {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 6px !important;
 }
 
 /* ---- 迷你捲動指示（琥珀段 = 高亮位置） ---- */
@@ -264,12 +255,6 @@
   cursor: text;
 }
 
-/* 底線／底色模式：提示游標會建立標註，而非純文字選取 */
-.pane[data-mode="underline"] .textLayer :global(span),
-.pane[data-mode="highlight"] .textLayer :global(span) {
-  cursor: crosshair;
-}
-
 .textLayer ::selection {
   background: var(--highlight-selection);
 }
@@ -317,8 +302,34 @@
   background: var(--hover-row);
 }
 
+.selMenu button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  background: none !important;
+}
+
 .selMenuAsk {
   color: var(--highlight) !important;
+}
+
+/* 圖示鈕（底線／背景／加註解／問AI／編輯備註／刪除）：正方形、置中圖示 */
+.selMenuIconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px !important;
+  color: var(--text-muted);
+}
+
+.selMenuIconBtn:hover:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.selMenuDivider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 2px;
+  background: var(--hairline-strong);
 }
 
 .selMenuArrow {
