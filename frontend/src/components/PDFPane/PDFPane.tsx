@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjs from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import styles from "./PDFPane.module.css";
-import { documentFileUrl, getChunks, type Chunk } from "../../api/client";
+import {
+  documentFileUrl,
+  getChunks,
+  type Annotation,
+  type Chunk,
+} from "../../api/client";
 import {
   useReaderStore,
   type HighlightTarget,
   type SelectionPreset,
 } from "../../stores/readerStore";
+import { useAnnotationStore } from "../../stores/annotationStore";
 import { Library } from "../Library/Library";
 import { useT } from "../../i18n";
 
@@ -21,6 +27,8 @@ const MIN_SELECTION_CHARS = 8;
 const ZOOM_MIN = 50;
 const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
+/** 穩定的空陣列參照：無標註的頁面共用同一個，避免每次 render 產生新 [] */
+const EMPTY_ANNOTATIONS: Annotation[] = [];
 
 interface SelMenu {
   x: number;
@@ -35,6 +43,8 @@ export function PDFPane() {
   const highlight = useReaderStore((s) => s.highlight);
   const requestSelectionAsk = useReaderStore((s) => s.requestSelectionAsk);
   const consumePendingJump = useReaderStore((s) => s.consumePendingJump);
+  const annotations = useAnnotationStore((s) => s.annotations);
+  const loadAnnotations = useAnnotationStore((s) => s.load);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<SelMenu | null>(null);
@@ -66,6 +76,22 @@ export function PDFPane() {
       void loaded?.destroy();
     };
   }, [documentId]);
+
+  // 使用者標註：documentId 變更時載入（null 清空）
+  useEffect(() => {
+    void loadAnnotations(documentId);
+  }, [documentId, loadAnnotations]);
+
+  // 標註按頁分組，比照 highlight 以 prop 傳入 PageCanvas
+  const annotationsByPage = useMemo(() => {
+    const map = new Map<number, Annotation[]>();
+    for (const a of annotations) {
+      const list = map.get(a.page);
+      if (list) list.push(a);
+      else map.set(a.page, [a]);
+    }
+    return map;
+  }, [annotations]);
 
   /** 選取文字對回 chunk：同頁 + 去空白後內容包含選取開頭 */
   const resolveChunkId = useCallback(
@@ -202,6 +228,7 @@ export function PDFPane() {
                 pdf={pdf}
                 pageNumber={n}
                 highlight={highlight}
+                annotations={annotationsByPage.get(n) ?? EMPTY_ANNOTATIONS}
                 renderWidth={renderWidth}
               />
             ))}
@@ -259,11 +286,14 @@ function PageCanvas({
   pdf,
   pageNumber,
   highlight,
+  annotations,
   renderWidth,
 }: {
   pdf: PDFDocumentProxy;
   pageNumber: number;
   highlight: HighlightTarget | null;
+  /** 本頁的使用者標註（已由 PDFPane 按頁分組） */
+  annotations: Annotation[];
   /** 目標渲染寬度（px），隨 zoom 變動 */
   renderWidth: number;
 }) {
@@ -388,6 +418,8 @@ function PageCanvas({
       className={styles.page}
       ref={holderRef}
       data-page={pageNumber}
+      // scale 是 render 定案值（renderWidth / 頁寬pt）；選取換算 (selectionBBox.ts) 讀取
+      data-scale={scale ?? undefined}
       style={
         scale === null
           ? { width: renderWidth, height: Math.round(renderWidth * 1.294) }
@@ -396,6 +428,54 @@ function PageCanvas({
     >
       <canvas ref={canvasRef} />
       <div className={styles.textLayer} ref={textRef} />
+      {/* 使用者標註層：靜態常駐、無動畫、pointer-events:none、z-index 低於 citation 高亮 */}
+      {scale !== null && annotations.length > 0 && (
+        <div className={styles.annotationLayer} aria-hidden="true">
+          {annotations.map((annot) =>
+            annot.bbox_list.map(([x0, y0, x1, y1], idx) => {
+              const box = {
+                left: x0 * scale,
+                top: y0 * scale,
+                width: (x1 - x0) * scale,
+                height: (y1 - y0) * scale,
+              };
+              const colorVar = `var(--annot-${annot.color})`;
+              if (annot.type === "highlight") {
+                return (
+                  <div
+                    key={`${annot.id}-${idx}`}
+                    className={styles.annotHighlight}
+                    style={{ ...box, background: colorVar }}
+                  />
+                );
+              }
+              if (annot.type === "underline") {
+                return (
+                  <div
+                    key={`${annot.id}-${idx}`}
+                    className={styles.annotUnderline}
+                    style={{ ...box, borderBottomColor: colorVar }}
+                  />
+                );
+              }
+              // note：虛線底線；第一個 bbox 右上角加 ✎ marker
+              return (
+                <div
+                  key={`${annot.id}-${idx}`}
+                  className={styles.annotNote}
+                  style={{ ...box, borderBottomColor: colorVar }}
+                >
+                  {idx === 0 && (
+                    <span className={styles.annotNoteMarker} style={{ color: colorVar }}>
+                      ✎
+                    </span>
+                  )}
+                </div>
+              );
+            }),
+          )}
+        </div>
+      )}
       {/* 高亮層：PyMuPDF bbox 為頂左原點 pt 座標，乘 scale 即 CSS px */}
       {active &&
         scale !== null &&

@@ -131,6 +131,40 @@
   background: var(--highlight-selection);
 }
 
+/* ---- 使用者標註層（靜態常駐；z-index 低於 citation 高亮） ---- */
+
+.annotationLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.annotHighlight {
+  position: absolute;
+  border-radius: 2px;
+  /* multiply：在白紙 canvas 上兩主題皆可讀，不會蓋掉底下文字 */
+  mix-blend-mode: multiply;
+}
+
+.annotUnderline {
+  position: absolute;
+  border-bottom: 2px solid transparent;
+}
+
+.annotNote {
+  position: absolute;
+  border-bottom: 2px dashed transparent;
+}
+
+.annotNoteMarker {
+  position: absolute;
+  right: -14px;
+  top: -14px;
+  font: 400 12px var(--sans);
+  line-height: 1;
+}
+
 /* ---- 高亮（引用落點） ---- */
 
 .highlight {
@@ -141,6 +175,7 @@
   box-shadow: 0 0 0 5px var(--highlight-ring);
   pointer-events: none;
   animation: pulse 0.6s ease-out 2;
+  z-index: 2;
 }
 
 @keyframes pulse {
