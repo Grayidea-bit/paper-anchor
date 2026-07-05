@@ -145,7 +145,10 @@
 - [x] [sonnet] T-TR-04 條目從對話翻譯萃取：migration 007 加 notes 欄；POST 可帶 source_text（詳細翻譯全文）→ glossary_extract.md prompt 萃取「譯文/註解」兩行（解析失敗降級整段當譯文）；無 source_text 走原直翻。真 LLM 實測萃取正確、舊條目向後相容。
 - [x] [sonnet] T-TR-05 翻譯後加入（取代選單獨立 🌐 鈕，使用者拍板整合）：翻譯 preset 帶 anchor（page/bbox）→ 候選綁定該則回答（session 內）→ 回答下方「＋加入翻譯表」帶全文萃取 → ✓已加入；中斷回答不出鈕；GlossaryPane 顯示 notes。真 LLM 全流程實測。
 - [x] 翻譯目標語言改自由輸入（datalist 建議 + placeholder；任意字串直接進 prompt，空值後端回落預設）。
-- **DoD**：✅ pytest **135 passed**、ruff/format 全綠、npm run build 過；migrations 006/007 套用 dev DB。
+- [x] [haiku] T-TR-06 glossary POST 支援前端直接提供 translation/notes（三層優先序，直存路徑零 LLM 呼叫）
+- [x] [sonnet] T-TR-07 加入翻譯表改前端抽取（回答第一行剝 markdown 當譯文、全文存 notes、瞬間完成）+ GlossaryPane 條目懸浮視窗（markdown 完整內容/跳到原文/Esc 關閉）
+- [x] [opus 主持] /code-review 全分支：8 finder 角度 37 候選 → 驗證後 7 成立 4 駁回；已修 4（store 切文獻 stale-response 競態、router 雙 session TOCTOU、ANNOT_COLORS 重複、死鍵 selAsk/cursor）。遺留 3（低優先）：PDFPane 雙 popover 樣板可抽共用、settings 前端→後端方向無 schema 守護（建議 SettingsUpdate 加 extra='forbid'）、glossary 萃取降級未截斷（現已是次要 fallback 路徑）。
+- **DoD**：✅ pytest **143 passed**、ruff/format 全綠、npm run build 過；migrations 006/007 套用 dev DB。
 - 發現事項/修正：~~settings 疑似要重啟 api 才生效~~ → 根因是 **router SettingsUpdate 漏 `translation_target_lang` 欄位**（Pydantic 靜默丟棄未知欄位，PUT 200 但未持久化）——已修＋守護測試（白名單鍵必須有對應 router 欄位，防同類再發）；E2E 驗證 roundtrip 與英文翻譯生效。另 T-TR-01 順修 conftest `async_client` 的 SessionLocal patch 從未生效之既有 bug。
 
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
