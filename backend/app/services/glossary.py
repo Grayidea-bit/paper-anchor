@@ -83,42 +83,56 @@ async def create_entry(
     bbox_list: list,
     chunk_id: int | None = None,
     source_text: str | None = None,
+    translation: str | None = None,
+    notes: str | None = None,
 ) -> dict:
-    """建立翻譯表條目：讀目標語言設定 → 翻譯／萃取 → 存庫。
+    """建立翻譯表條目：優先序判定 → 翻譯／萃取（或直存） → 存庫。
 
-    有 `source_text`（T-TR-04，來自對話「翻譯」動作的詳細翻譯全文）：
-    用 glossary_extract prompt 萃取「簡潔譯文 + 白話註解」。
-    無 `source_text`（fallback，直接圈選加入）：走原 translate_term 路徑，notes 存空字串。
-    LLM 失敗時條目仍建立，translation/notes 存空字串（不擲例外，不讓整個請求 500）。
+    優先序：
+    1. `translation` 有值 → 直接存（notes 一併存，None 當 ""），完全不打 LLM；
+    2. `translation` 無值但 `source_text` 有 → 用 glossary_extract prompt
+       萃取「簡潔譯文 + 白話註解」；
+    3. 兩者皆無 → 走 translate_term 直翻路徑，notes 存空字串。
+
+    LLM 失敗時條目仍建立，translation/notes 存空字串
+    （不擲例外，不讓整個請求 500）。
     """
     target_lang = _target_lang()
 
-    context = ""
-    if chunk_id is not None:
-        chunk = await repo.get_chunk(session, chunk_id)
-        if chunk is not None:
-            context = (chunk["content"] or "")[:CONTEXT_CHAR_BUDGET]
+    # Priority 1: translation 前端直接提供
+    if translation is not None:
+        final_translation = translation
+        final_notes = notes or ""
+    else:
+        # Priority 2 & 3: LLM 路徑
+        context = ""
+        if chunk_id is not None:
+            chunk = await repo.get_chunk(session, chunk_id)
+            if chunk is not None:
+                context = (chunk["content"] or "")[:CONTEXT_CHAR_BUDGET]
 
-    translation = ""
-    notes = ""
-    try:
-        if source_text:
-            translation, notes = await _extract_from_source(term, source_text, target_lang)
-        else:
-            translation = await _translate(term, context, target_lang)
-    except Exception:
-        logger.exception("glossary translate failed: document=%s term=%s", document_id, term)
+        final_translation = ""
+        final_notes = ""
+        try:
+            if source_text:
+                final_translation, final_notes = await _extract_from_source(
+                    term, source_text, target_lang
+                )
+            else:
+                final_translation = await _translate(term, context, target_lang)
+        except Exception:
+            logger.exception("glossary translate failed: document=%s term=%s", document_id, term)
 
     return await repo.create_glossary_entry(
         session,
         document_id,
         term=term,
-        translation=translation,
+        translation=final_translation,
         target_lang=target_lang,
         page=page,
         bbox_list=bbox_list,
         chunk_id=chunk_id,
-        notes=notes,
+        notes=final_notes,
     )
 
 

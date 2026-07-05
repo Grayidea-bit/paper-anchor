@@ -19,6 +19,8 @@ class GlossaryCreate(BaseModel):
     bbox_list: list[tuple[float, float, float, float]] = Field(min_length=1)
     chunk_id: int | None = None
     source_text: str | None = Field(default=None, max_length=8000)
+    translation: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=12000)
 
 
 @router.get("/documents/{document_id}/glossary")
@@ -36,8 +38,12 @@ async def list_glossary(document_id: int) -> list[dict]:
 async def create_glossary_entry(document_id: int, body: GlossaryCreate) -> dict:
     """建立翻譯表條目。
 
-    帶 `source_text`（對話「翻譯」動作的詳細翻譯全文）時萃取「簡潔譯文 + 白話註解」；
-    不帶時走原直接翻譯路徑（fallback，notes 為空）。LLM 失敗降級為空字串，條目仍建立。
+    優先序：
+    1. `translation` 有值 → 直接存（notes 一併存，None 當 ""），不打 LLM；
+    2. `translation` 無值但 `source_text` 有 → 維持現有 LLM 萃取路徑；
+    3. 兩者皆無 → 維持現有 translate_term 直翻路徑。
+
+    LLM 失敗降級為空字串，條目仍建立。
     """
     async with SessionLocal() as session:
         doc = await repo.get_document(session, document_id)
@@ -52,6 +58,8 @@ async def create_glossary_entry(document_id: int, body: GlossaryCreate) -> dict:
             bbox_list=body.bbox_list,
             chunk_id=body.chunk_id,
             source_text=body.source_text,
+            translation=body.translation,
+            notes=body.notes,
         )
 
 

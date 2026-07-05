@@ -103,9 +103,10 @@
 ### D9 翻譯表（glossary）（T-TR-01 / T-TR-04）
 - **錨定設計同 annotations**：使用者於 PDF 圈選術語 →「加入翻譯表」，前端換算 bbox（PDF 座標系）連同頁碼、chunk_id 送後端；`glossary_entries` 表結構與 annotations 同源（`page`/`bbox_list`/`chunk_id`），不碰 chunks 引用鏈本身（鐵律 1）。
 - **目標語言設定**：`settings_store` 白名單鍵 `translation_target_lang`（非 secret），值為顯示用字串（如「繁體中文」「English」「日本語」）直接進 prompt；未設定時服務層回落預設 `"繁體中文"`。
-- **兩種建立路徑（T-TR-04）**：
-  1. **從對話萃取（主路徑）**：使用者圈選 → 對話「翻譯」動作產生詳細翻譯（含白話說明）→ 前端在該回答下方提供「加入翻譯表」，帶著那份詳細翻譯全文（`source_text`，max 8000 字）呼叫建立 API。`services/glossary.py` 套用 `app/prompts/glossary_extract.md`（帶術語、目標語言、`source_text`）→ 呼叫 `llm.chat()` → 解析固定格式「譯文：/註解：」兩行 → `translation` + `notes` 入庫。解析失敗（LLM 未照格式回覆）降級：整段 `strip()` 當 `translation`，`notes` 存空字串。
-  2. **直接圈選加入（fallback）**：不帶 `source_text` 時行為與 T-TR-01 相同——若有 `chunk_id` 撈該 chunk 內容截前 800 字當上下文 → 套用 `app/prompts/translate_term.md` → 呼叫 `llm.chat()`（既有非串流 helper，鐵律 3；未新增 llm.py 函式）→ 譯文 `strip()` 後存庫，`notes` 存空字串。
+- **建立優先序（T-TR-04 / T-TR-06）**：
+  1. **前端直接提供譯文（T-TR-06，最高優先）**：POST 帶 `translation` 欄位（max 500 字）時直接存庫，不打 LLM；`notes` 可同時提供（max 12000 字，無則預設空字串）。適用「翻譯回答抽取」流程：前端自行從翻譯結果第一行抽 translation、整份回答當 notes，加速條目建立。
+  2. **從對話萃取（主路徑）**：POST 帶 `source_text`（對話「翻譯」動作的詳細翻譯全文，max 8000 字）但無 `translation` 時，`services/glossary.py` 套用 `app/prompts/glossary_extract.md`（帶術語、目標語言、`source_text`）→ 呼叫 `llm.chat()` → 解析固定格式「譯文：/註解：」兩行 → `translation` + `notes` 入庫。解析失敗（LLM 未照格式回覆）降級：整段 `strip()` 當 `translation`，`notes` 存空字串。
+  3. **直接圈選加入（fallback）**：不帶 `source_text` 且無 `translation` 時行為與 T-TR-01 相同——若有 `chunk_id` 撈該 chunk 內容截前 800 字當上下文 → 套用 `app/prompts/translate_term.md` → 呼叫 `llm.chat()`（既有非串流 helper，鐵律 3；未新增 llm.py 函式）→ 譯文 `strip()` 後存庫，`notes` 存空字串。
 - **失敗降級**：LLM 呼叫失敗時條目仍建立（或 retranslate 時保留舊譯文），`translation`/`notes` 存空字串，不擲例外、不讓請求 500；前端可用 retranslate 端點重試或換目標語言後重打（retranslate 僅重打 `translation`，`notes` 不動）。
 - **CRUD 端點**
   - `GET /api/documents/{id}/glossary` — 條目列表（按 page 與 created_at 排序）
@@ -201,7 +202,7 @@ messages     (id, conversation_id, role, content TEXT,
 | PATCH | /api/annotations/{id} | 更新標註 {note_text?, color?}（T-AN-01） |
 | DELETE | /api/annotations/{id} | 刪除標註 → 204（T-AN-01） |
 | GET | /api/documents/{id}/glossary | 文獻翻譯表列表（T-TR-01） |
-| POST | /api/documents/{id}/glossary | 建立翻譯表條目 → 201，含首次翻譯；body 可選 `source_text`（對話詳細翻譯全文，觸發萃取譯文+註解）（T-TR-01 / T-TR-04） |
+| POST | /api/documents/{id}/glossary | 建立翻譯表條目 → 201；優先序（T-TR-06）：`translation` 欄位提供時直存（不打 LLM），否則看 `source_text`（萃取譯文+註解）或直翻；body 可選 `translation`（max 500）、`notes`（max 12000）、`source_text`（max 8000）（T-TR-01 / T-TR-04 / T-TR-06） |
 | POST | /api/glossary/{entry_id}/retranslate | 重打一次翻譯並更新（T-TR-01） |
 | DELETE | /api/glossary/{entry_id} | 刪除翻譯表條目 → 204（T-TR-01） |
 | GET | /api/documents/{id}/conversations | 對話串列表（document scope） |

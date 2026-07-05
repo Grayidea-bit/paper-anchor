@@ -143,6 +143,77 @@ async def test_create_entry_without_source_text_notes_empty(test_db, setup_test_
 
 
 @pytest.mark.asyncio
+async def test_create_entry_with_frontend_provided_translation_and_notes_skips_llm(
+    test_db, setup_test_document
+):
+    """優先序 1：前端直接提供 translation+notes → 直存，llm.chat 不被呼叫。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        with patch("app.services.glossary.chat") as mock_chat:
+            entry = await glossary_service.create_entry(
+                session,
+                doc_id,
+                term="neural network",
+                page=1,
+                bbox_list=[[0, 0, 10, 10]],
+                chunk_id=chunk_id,
+                translation="神經網路",
+                notes="一種模仿生物神經系統結構的機器學習模型。",
+            )
+    assert entry["translation"] == "神經網路"
+    assert entry["notes"] == "一種模仿生物神經系統結構的機器學習模型。"
+    mock_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_entry_with_frontend_provided_translation_only_notes_empty(
+    test_db, setup_test_document
+):
+    """優先序 1：前端只提供 translation（notes=None）→ 直存 translation，notes 變空字串。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        with patch("app.services.glossary.chat") as mock_chat:
+            entry = await glossary_service.create_entry(
+                session,
+                doc_id,
+                term="backpropagation",
+                page=1,
+                bbox_list=[[0, 0, 10, 10]],
+                chunk_id=chunk_id,
+                translation="反向傳播",
+            )
+    assert entry["translation"] == "反向傳播"
+    assert entry["notes"] == ""
+    mock_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_entry_with_frontend_provided_translation_empty_notes(
+    test_db, setup_test_document
+):
+    """優先序 1：前端提供 translation 與 notes=""（顯示提供空字串）→ 兩者都直存。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        with patch("app.services.glossary.chat") as mock_chat:
+            entry = await glossary_service.create_entry(
+                session,
+                doc_id,
+                term="epoch",
+                page=1,
+                bbox_list=[[0, 0, 10, 10]],
+                chunk_id=chunk_id,
+                translation="時代",
+                notes="",
+            )
+    assert entry["translation"] == "時代"
+    assert entry["notes"] == ""
+    mock_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_create_entry_no_chunk_id(test_db, setup_test_document):
     """無 chunk_id 時不查上下文，仍可翻譯建立。"""
     session_maker, _ = test_db
@@ -374,6 +445,122 @@ async def test_router_empty_bbox_list_422(async_client, setup_test_document):
         json={"term": "x", "page": 1, "bbox_list": []},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_router_create_with_frontend_translation_and_notes_no_llm_call(
+    async_client, setup_test_document
+):
+    """POST 帶 translation+notes：直存，LLM 不被呼叫。"""
+    doc_id, chunk_id = setup_test_document
+    with patch("app.services.glossary.chat") as mock_chat:
+        resp = await async_client.post(
+            f"/api/documents/{doc_id}/glossary",
+            json={
+                "term": "convolutional neural network",
+                "page": 1,
+                "bbox_list": [[0, 0, 10, 10]],
+                "chunk_id": chunk_id,
+                "translation": "卷積神經網路",
+                "notes": "一種使用卷積層進行特徵提取的神經網路架構。",
+            },
+        )
+    assert resp.status_code == 201
+    entry = resp.json()
+    assert entry["translation"] == "卷積神經網路"
+    assert entry["notes"] == "一種使用卷積層進行特徵提取的神經網路架構。"
+    mock_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_router_create_with_frontend_translation_only_notes_defaults_to_empty(
+    async_client, setup_test_document
+):
+    """POST 帶 translation（不帶 notes）：translation 直存，notes 變空字串。"""
+    doc_id, chunk_id = setup_test_document
+    with patch("app.services.glossary.chat") as mock_chat:
+        resp = await async_client.post(
+            f"/api/documents/{doc_id}/glossary",
+            json={
+                "term": "recurrent neural network",
+                "page": 1,
+                "bbox_list": [[0, 0, 10, 10]],
+                "chunk_id": chunk_id,
+                "translation": "遞迴神經網路",
+            },
+        )
+    assert resp.status_code == 201
+    entry = resp.json()
+    assert entry["translation"] == "遞迴神經網路"
+    assert entry["notes"] == ""
+    mock_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_router_create_translation_field_too_long_422(async_client, setup_test_document):
+    """translation 超過 500 字元 → 422。"""
+    doc_id, chunk_id = setup_test_document
+    long_translation = "a" * 501
+    resp = await async_client.post(
+        f"/api/documents/{doc_id}/glossary",
+        json={
+            "term": "test",
+            "page": 1,
+            "bbox_list": [[0, 0, 10, 10]],
+            "chunk_id": chunk_id,
+            "translation": long_translation,
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_router_create_notes_field_too_long_422(async_client, setup_test_document):
+    """notes 超過 12000 字元 → 422。"""
+    doc_id, chunk_id = setup_test_document
+    long_notes = "a" * 12001
+    resp = await async_client.post(
+        f"/api/documents/{doc_id}/glossary",
+        json={
+            "term": "test",
+            "page": 1,
+            "bbox_list": [[0, 0, 10, 10]],
+            "chunk_id": chunk_id,
+            "translation": "譯文",
+            "notes": long_notes,
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_router_create_with_frontend_translation_notes_persists_and_reads_back(
+    async_client, setup_test_document
+):
+    """POST 帶 translation+notes，GET 回來確認都保存。"""
+    doc_id, chunk_id = setup_test_document
+    with patch("app.services.glossary.chat"):
+        resp = await async_client.post(
+            f"/api/documents/{doc_id}/glossary",
+            json={
+                "term": "attention mechanism",
+                "page": 1,
+                "bbox_list": [[0, 0, 10, 10]],
+                "chunk_id": chunk_id,
+                "translation": "注意力機制",
+                "notes": "一種允許模型關注輸入中特定部分的技術。",
+            },
+        )
+    entry_id = resp.json()["id"]
+
+    # GET 檢驗
+    resp = await async_client.get(f"/api/documents/{doc_id}/glossary")
+    assert resp.status_code == 200
+    entries = resp.json()
+    assert len(entries) == 1
+    assert entries[0]["id"] == entry_id
+    assert entries[0]["translation"] == "注意力機制"
+    assert entries[0]["notes"] == "一種允許模型關注輸入中特定部分的技術。"
 
 
 # ---------- repo 層 ----------
