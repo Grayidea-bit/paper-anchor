@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Square } from "lucide-react";
 import styles from "./ChatPane.module.css";
 import {
   CLAUDE_MODELS,
@@ -36,6 +37,8 @@ type LocalMessage = Omit<Message, "id" | "created_at"> & {
   thoughtSeconds?: number;
   /** 工具活動（僅本次串流）：如 "keyword_search:done" */
   toolEvents?: string[];
+  /** 使用者主動中斷（保留已收到文字，不視為錯誤） */
+  stopped?: boolean;
 };
 type Attached = { text: string; chunkId: number | null };
 
@@ -84,6 +87,7 @@ function Chat({ context }: { context: ChatContext }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastFailedRef = useRef<{ question: string; selection: Attached | null } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const isDocument = context.kind === "document";
 
@@ -169,6 +173,8 @@ function Chat({ context }: { context: ChatContext }) {
       if (!question || convId === null || streaming) return;
       setError(null);
       setStreaming(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
       const sel = selection
         ? { text: selection.text, chunk_id: selection.chunkId }
         : undefined;
@@ -209,6 +215,7 @@ function Chat({ context }: { context: ChatContext }) {
             onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
             onDone: () => patchLast((m) => ({ ...m, pending: false })),
             onError: (message) => {
+              if (controller.signal.aborted) return;
               setError(message);
               lastFailedRef.current = { question, selection };
               setMessages((prev) => {
@@ -219,16 +226,25 @@ function Chat({ context }: { context: ChatContext }) {
               });
             },
           },
-          { language: lang, selection: sel },
+          { language: lang, selection: sel, signal: controller.signal },
         );
+        if (controller.signal.aborted) {
+          // 使用者主動中斷：保留已收到文字，標記已中斷，不視為錯誤
+          patchLast((m) => ({ ...m, pending: false, stopped: true }));
+        }
       } catch (e) {
-        setError((e as Error).message);
+        if (!controller.signal.aborted) setError((e as Error).message);
       } finally {
+        if (abortRef.current === controller) abortRef.current = null;
         setStreaming(false);
       }
     },
     [convId, streaming, lang],
   );
+
+  const stopGenerating = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -388,9 +404,10 @@ function Chat({ context }: { context: ChatContext }) {
                   onCite={clickCitation}
                 />
               )}
-              {m.pending && m.content === "" && (
+              {m.pending && m.content === "" && !m.stopped && (
                 <ThinkingCard startedAt={m.startedAt ?? Date.now()} reasoning={m.reasoning} />
               )}
+              {m.stopped && <span className={styles.stoppedTag}>{t.generationStopped}</span>}
             </div>
           </div>
         ))}
@@ -463,14 +480,24 @@ function Chat({ context }: { context: ChatContext }) {
               ))}
             </select>
           )}
-          <button
-            className={styles.send}
-            title={t.send}
-            disabled={streaming || !input.trim() || convId === null}
-            onClick={() => void send()}
-          >
-            {streaming ? "…" : "↑"}
-          </button>
+          {streaming ? (
+            <button
+              className={`${styles.send} ${styles.stop}`}
+              title={t.stopGenerating}
+              onClick={stopGenerating}
+            >
+              <Square size={14} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              className={styles.send}
+              title={t.send}
+              disabled={!input.trim() || convId === null}
+              onClick={() => void send()}
+            >
+              ↑
+            </button>
+          )}
         </div>
       </div>
     </section>

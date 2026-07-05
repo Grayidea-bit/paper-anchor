@@ -344,24 +344,38 @@ export interface StreamHandlers {
 export interface StreamOptions {
   selection?: { text: string; chunk_id: number | null };
   language?: string;
+  /** 傳入後可用 controller.abort() 中斷串流；中斷時靜默結束，不觸發 onError */
+  signal?: AbortSignal;
 }
 
-/** POST 提問並解析 SSE 串流（token* → citations → done | error） */
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
+/** POST 提問並解析 SSE 串流（token* → citations → done | error）。
+ * 若 options.signal 被 abort：靜默 return，不呼叫 onError（呼叫端自行處理 UI）。 */
 export async function streamMessage(
   convId: number,
   content: string,
   handlers: StreamHandlers,
   options: StreamOptions = {},
 ): Promise<void> {
-  const resp = await fetch(`/api/conversations/${convId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content,
-      selection: options.selection,
-      language: options.language,
-    }),
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`/api/conversations/${convId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content,
+        selection: options.selection,
+        language: options.language,
+      }),
+      signal: options.signal,
+    });
+  } catch (e) {
+    if (isAbortError(e)) return;
+    throw e;
+  }
   if (!resp.ok || !resp.body) {
     handlers.onError(`API ${resp.status}`);
     return;
@@ -391,17 +405,24 @@ export async function streamMessage(
       handlers.onError(payload.message as string);
     }
   };
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let sep;
-    while ((sep = buf.indexOf("\n\n")) >= 0) {
-      dispatch(buf.slice(0, sep));
-      buf = buf.slice(sep + 2);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buf.indexOf("\n\n")) >= 0) {
+        dispatch(buf.slice(0, sep));
+        buf = buf.slice(sep + 2);
+      }
     }
+  } catch (e) {
+    if (isAbortError(e) || options.signal?.aborted) return;
+    throw e;
   }
-  if (!ended) handlers.onError("連線中斷");
+  if (ended) return;
+  if (options.signal?.aborted) return;
+  handlers.onError("連線中斷");
 }
 
 // ---- annotations ----

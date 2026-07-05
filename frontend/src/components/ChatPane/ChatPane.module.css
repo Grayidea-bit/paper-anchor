@@ -544,6 +544,28 @@
   cursor: not-allowed;
 }
 
+.stop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised);
+  color: var(--text-strong);
+  border: 1px solid var(--hairline-strong);
+}
+
+.stop:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.stoppedTag {
+  display: inline-block;
+  margin-top: 4px;
+  font: 500 10.5px var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
 /* ---- 導讀卡 ---- */
 
 .digestCard {
