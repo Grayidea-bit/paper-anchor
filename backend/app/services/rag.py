@@ -125,9 +125,7 @@ def build_messages(
     language: str | None = None,
 ) -> list[dict]:
     """OpenAI 格式 messages（digest/測試沿用；對話管線改走 agent.stream_chat）。"""
-    system = build_system(
-        context_chunks, scope=scope, scope_title=scope_title, language=language
-    )
+    system = build_system(context_chunks, scope=scope, scope_title=scope_title, language=language)
     messages: list[dict] = [{"role": "system", "content": system}]
     # 空訊息（曾中斷的串流殘留）不進 prompt
     for m in [m for m in history if m["content"].strip()][-HISTORY_LIMIT:]:

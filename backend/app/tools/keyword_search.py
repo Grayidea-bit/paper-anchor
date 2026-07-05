@@ -15,9 +15,7 @@ ENABLED = True
 _SNIPPET_CHARS = 300
 
 
-async def keyword_search(
-    ctx: RunContext[ToolDeps], query: str, max_results: int = 5
-) -> ToolReturn:
+async def keyword_search(ctx: RunContext[ToolDeps], query: str, max_results: int = 5) -> ToolReturn:
     """在目前對話範圍的文獻全文中精確檢索關鍵字，回傳帶 [C編號] 的段落（可直接引用）。
 
     需要找出「所有提到某詞的段落」或語意檢索不可靠時使用。
@@ -39,8 +37,7 @@ async def keyword_search(
     if not chunks:
         return ToolReturn(return_value=f"找不到包含「{query}」的段落。")
     lines = [
-        f"[C{c['id']}]（《{c['document_title']}》 p.{c['page']}）"
-        f"{c['content'][:_SNIPPET_CHARS]}"
+        f"[C{c['id']}]（《{c['document_title']}》 p.{c['page']}）{c['content'][:_SNIPPET_CHARS]}"
         for c in chunks
     ]
     return ToolReturn(

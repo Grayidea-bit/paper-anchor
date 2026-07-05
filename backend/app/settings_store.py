@@ -57,9 +57,7 @@ async def update(values: dict) -> dict:
             if key not in ALLOWED_KEYS:
                 continue
             if value in ("", None):
-                await session.execute(
-                    text("DELETE FROM settings WHERE key = :key"), {"key": key}
-                )
+                await session.execute(text("DELETE FROM settings WHERE key = :key"), {"key": key})
                 _cache.pop(key, None)
             else:
                 await session.execute(

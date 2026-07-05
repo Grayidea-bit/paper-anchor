@@ -42,9 +42,7 @@ async def list_document_conversations(doc_id: int) -> list[dict]:
     async with SessionLocal() as session:
         if await repo.get_document(session, doc_id) is None:
             raise NotFoundError("document", doc_id)
-        return await repo.list_conversations_scoped(
-            session, scope="document", document_id=doc_id
-        )
+        return await repo.list_conversations_scoped(session, scope="document", document_id=doc_id)
 
 
 @router.post("/documents/{doc_id}/conversations", status_code=201)
@@ -129,9 +127,7 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
         try:
             async with SessionLocal() as session:
                 selection = body.selection.model_dump() if body.selection else None
-                await repo.add_message(
-                    session, conv_id, "user", body.content, selection=selection
-                )
+                await repo.add_message(session, conv_id, "user", body.content, selection=selection)
                 query_embedding = await embed_query(body.content)
                 context = await rag.retrieve_context(
                     session,
@@ -151,9 +147,7 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
             known_ids = {c["id"] for c in context}
             parts: list[str] = []
             usage: dict = {}
-            async for event in agent.stream_chat(
-                system, history, user_content, deps, model=model
-            ):
+            async for event in agent.stream_chat(system, history, user_content, deps, model=model):
                 if event["type"] == "token":
                     parts.append(event["text"])
                     yield _sse("token", {"text": event["text"]})
@@ -183,8 +177,12 @@ async def send_message(conv_id: int, body: MessageCreate) -> StreamingResponse:
             yield _sse("citations", {"citations": citations})
             async with SessionLocal() as session:
                 saved = await repo.add_message(
-                    session, conv_id, "assistant", answer,
-                    citations=citations, token_usage=usage,
+                    session,
+                    conv_id,
+                    "assistant",
+                    answer,
+                    citations=citations,
+                    token_usage=usage,
                 )
             yield _sse("done", {"message_id": saved["id"], "token_usage": usage})
         except LLMError as e:

@@ -170,9 +170,7 @@ async def stream_chat(
                     for block in blocks:
                         if not isinstance(block, ToolResultBlock):
                             continue
-                        name = _short_tool_name(
-                            tool_names.get(block.tool_use_id, "?")
-                        )
+                        name = _short_tool_name(tool_names.get(block.tool_use_id, "?"))
                         status = "error" if block.is_error else "done"
                         yield {"type": "tool", "name": name, "status": status}
                         chunks = _flush_sink()
@@ -192,9 +190,7 @@ async def stream_chat(
                     if msg.subtype != "success":
                         status = msg.api_error_status
                         extra = f", status={status}" if status else ""
-                        raise LLMError(
-                            f"Claude 後端執行失敗（subtype={msg.subtype}{extra}）"
-                        )
+                        raise LLMError(f"Claude 後端執行失敗（subtype={msg.subtype}{extra}）")
                     usage = msg.usage or {}
                     yield {
                         "type": "usage",
@@ -212,9 +208,7 @@ async def stream_chat(
             raise
         except Exception as e:  # noqa: BLE001
             message = str(e)
-            logger.warning(
-                "claude backend run failed (attempt %s): %s", attempt + 1, message[:300]
-            )
+            logger.warning("claude backend run failed (attempt %s): %s", attempt + 1, message[:300])
             if visible or attempt == _MAX_ATTEMPTS - 1:
                 raise LLMError(f"Claude 後端執行失敗：{message[:300]}") from e
             if _is_retryable(message):

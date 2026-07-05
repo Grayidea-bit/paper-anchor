@@ -49,9 +49,7 @@ async def list_project_conversations(project_id: int) -> list[dict]:
     async with SessionLocal() as session:
         if await repo.get_project(session, project_id) is None:
             raise NotFoundError("project", project_id)
-        return await repo.list_conversations_scoped(
-            session, scope="project", project_id=project_id
-        )
+        return await repo.list_conversations_scoped(session, scope="project", project_id=project_id)
 
 
 @router.post("/{project_id}/conversations", status_code=201)

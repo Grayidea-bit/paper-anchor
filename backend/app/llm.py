@@ -31,6 +31,7 @@ class LLMError(RuntimeError):
 
 # ---------- 執行期覆蓋（設定頁）與 RPM ----------
 
+
 def _default_chat_model() -> str:
     """openai 來源預設 model：llm_chat_models 第一項 > llm_chat_model > env 預設。"""
     env = get_settings()
@@ -74,6 +75,7 @@ async def _backoff(attempt: int) -> None:
 
 # ---------- embeddings ----------
 
+
 async def _embed(texts: list[str], input_type: str) -> list[list[float]]:
     settings = get_settings()
     results: list[list[float]] = []
@@ -112,6 +114,7 @@ async def embed_query(text: str) -> list[float]:
 
 
 # ---------- chat ----------
+
 
 class ThinkFilter:
     """串流中過濾 <think>…</think>（標籤可能被切在不同 chunk）。"""

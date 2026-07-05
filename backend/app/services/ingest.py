@@ -30,9 +30,7 @@ def parse_pdf(file_path: str) -> tuple[str, int, list[dict]]:
         chunks: list[dict] = []
         for page_no, page in enumerate(doc, start=1):
             blocks = [
-                (b[:4], b[4].strip())
-                for b in page.get_text("blocks")
-                if b[6] == 0 and b[4].strip()
+                (b[:4], b[4].strip()) for b in page.get_text("blocks") if b[6] == 0 and b[4].strip()
             ]
             chunks.extend(_pack_blocks(blocks, page_no, start_index=len(chunks)))
         if not chunks:
@@ -42,9 +40,7 @@ def parse_pdf(file_path: str) -> tuple[str, int, list[dict]]:
         doc.close()
 
 
-def _pack_blocks(
-    blocks: list[tuple[tuple, str]], page_no: int, start_index: int
-) -> list[dict]:
+def _pack_blocks(blocks: list[tuple[tuple, str]], page_no: int, start_index: int) -> list[dict]:
     """把同頁的 text block 聚合成 chunk：目標 ~1800 字元、上限 2400。"""
     chunks: list[dict] = []
     cur_texts: list[str] = []

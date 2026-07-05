@@ -67,8 +67,7 @@ async def eval_doc(client: httpx.AsyncClient, doc: dict) -> list[dict]:
             "A_answer": bool(r["answer"].strip()) and not r["error"],
             "B_cited": bool(r["citations"]) or says_not_found,
             "C_anchors": all(
-                1 <= c["page"] <= doc["page_count"] and c["bbox_list"]
-                for c in r["citations"]
+                1 <= c["page"] <= doc["page_count"] and c["bbox_list"] for c in r["citations"]
             ),
         }
         results.append(
@@ -95,18 +94,13 @@ PROJECT_QUESTIONS = [
 
 async def eval_project_scope(client: httpx.AsyncClient) -> list[dict]:
     """臨時專案 + 跨文獻問答 + 隔離鐵證（citation.document_id ∈ 專案集合）。"""
-    docs = [
-        d for d in (await client.get(f"{BASE}/api/documents")).json()
-        if d["status"] == "ready"
-    ]
+    docs = [d for d in (await client.get(f"{BASE}/api/documents")).json() if d["status"] == "ready"]
     if len(docs) < 2:
         print("need >= 2 ready docs for project eval")
         sys.exit(1)
     in_project = docs[: max(2, len(docs) // 2 + 1)]
     page_count = {d["id"]: d["page_count"] for d in docs}
-    project = (
-        await client.post(f"{BASE}/api/projects", json={"name": "citation-eval-tmp"})
-    ).json()
+    project = (await client.post(f"{BASE}/api/projects", json={"name": "citation-eval-tmp"})).json()
     pid = project["id"]
     results = []
     try:
@@ -115,9 +109,7 @@ async def eval_project_scope(client: httpx.AsyncClient) -> list[dict]:
         allowed = {d["id"] for d in in_project}
         print(f"project {pid}: docs {sorted(allowed)} of {sorted(page_count)}", flush=True)
         conv = (
-            await client.post(
-                f"{BASE}/api/projects/{pid}/conversations", json={"title": "eval"}
-            )
+            await client.post(f"{BASE}/api/projects/{pid}/conversations", json={"title": "eval"})
         ).json()
         for q in PROJECT_QUESTIONS:
             r = await ask(client, conv["id"], q)
@@ -156,7 +148,8 @@ async def main() -> None:
             all_results = await eval_project_scope(client)
         else:
             docs = [
-                d for d in (await client.get(f"{BASE}/api/documents")).json()
+                d
+                for d in (await client.get(f"{BASE}/api/documents")).json()
                 if d["status"] == "ready"
             ]
             print(f"evaluating {len(docs)} docs x {len(QUESTIONS)} questions", flush=True)
