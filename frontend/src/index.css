@@ -127,6 +127,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* pdf.js TextLayer 會在 body 下掛量測用 canvas.hiddenCanvasElement（inline、高 0），
+   其 line box 會把 body 撐高 ~20px 造成整頁微捲動；本專案未載入 pdf_viewer.css，補其隱藏規則 */
+body > .hiddenCanvasElement {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 ::selection {
   background: var(--highlight-selection);
 }
