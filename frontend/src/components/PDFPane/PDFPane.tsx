@@ -241,12 +241,15 @@ export function PDFPane() {
     if (!notePopover) return;
     const trimmed = noteText.trim();
     if (!trimmed) return;
+    // 後端要求 bbox_list min_length=1；換算失敗（null）時直接放棄，
+    // 不送必失敗的 422 請求，也不假裝成功關閉 popover（避免使用者誤以為已存）。
+    if (!notePopover.bboxList || notePopover.bboxList.length === 0) return;
     const chunkId = await resolveChunkId(notePopover.text, notePopover.page);
     await createAnnotation({
       type: "note",
       color: annotColor,
       page: notePopover.page ?? 1,
-      bbox_list: notePopover.bboxList ?? [],
+      bbox_list: notePopover.bboxList,
       chunk_id: chunkId,
       selected_text: notePopover.text.slice(0, 3000),
       note_text: trimmed,
@@ -345,7 +348,9 @@ export function PDFPane() {
             <button className={styles.selMenuAsk} onClick={() => void onAction("free")}>
               {t.selAsk}…
             </button>
-            <button onClick={onOpenNote}>{t.addNote}</button>
+            <button onClick={onOpenNote} disabled={!menu.bboxList} title={menu.bboxList ? undefined : t.noteNoAnchor}>
+              {t.addNote}
+            </button>
             <span className={styles.selMenuArrow} />
           </div>
         )}
@@ -364,12 +369,15 @@ export function PDFPane() {
               autoFocus
               rows={3}
             />
+            {!notePopover.bboxList && (
+              <p className={styles.notePopoverWarn}>{t.noteNoAnchor}</p>
+            )}
             <div className={styles.notePopoverActions}>
               <button onClick={closeNotePopover}>{t.cancel}</button>
               <button
                 className={styles.notePopoverSave}
                 onClick={() => void onSaveNote()}
-                disabled={!noteText.trim()}
+                disabled={!noteText.trim() || !notePopover.bboxList}
               >
                 {t.save}
               </button>

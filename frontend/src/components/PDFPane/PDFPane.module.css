@@ -362,6 +362,13 @@
   padding: 6px 8px;
 }
 
+.notePopoverWarn {
+  margin: 0;
+  font: 400 11px var(--sans);
+  color: var(--accent, #c0603a);
+  line-height: 1.35;
+}
+
 .notePopoverActions {
   display: flex;
   justify-content: flex-end;

@@ -116,6 +116,7 @@ const DICT = {
     highlightMode: "底色",
     addNote: "加註解",
     notePlaceholder: "寫下你的備註…",
+    noteNoAnchor: "無法定位這段選取，換一段文字再加註解。",
     tabChat: "對話",
     tabNotes: "筆記",
     notesEmpty:
@@ -225,6 +226,7 @@ const DICT = {
     highlightMode: "Highlight",
     addNote: "Add note",
     notePlaceholder: "Write a note…",
+    noteNoAnchor: "Couldn't locate this selection — pick another passage to annotate.",
     tabChat: "Chat",
     tabNotes: "Notes",
     notesEmpty:
