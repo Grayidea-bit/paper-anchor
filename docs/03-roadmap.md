@@ -131,6 +131,9 @@
 - [x] [opus] T-AN-07 整合審查+回歸：全鏈驗收、eval_citations 回歸、雙主題目測、本節勾選
 - **DoD**：✅ 全部達成（2026-07-05）。pytest **99 passed**（annotations CRUD/422/級聯 + list_annotations scope 隔離）、ruff/format 全綠、`npm run build`（容器內 tsc+vite）過；migration 005 套用、annotations 表結構符合規格。**eval_citations 15/15 不退化**（claude-sdk 後端實跑，鐵律 1 守住）。API roundtrip 四端點全對（201×3/422/list/PATCH/204×3/404）；`/api/tools` 含 list_annotations。瀏覽器 E2E 全 PASS：底線→底色換色→游標加註解三筆建立、筆記籤三種 icon+色點+note 顯示、點跳轉命中、刪除、**重載原位重現**、**zoom 150% 底色框精準對齊**。
 - 發現事項/當場修正：T-AN-04 加註解在座標換算失敗時 `bbox_list:[]` 會觸發後端 422 並被 store 靜默吞掉，使用者誤以為已存 → **已修**（bbox 無效時「加註解」鈕 disabled + popover 儲存禁用 + 提示文字）。其餘遺留（CRUD 失敗無 toast、空 bbox note 跳轉無框）記於 `docs/reviews/M10.md`，不擋 v1。
+- **試玩回饋追加（2026-07-05）**：
+- [x] [sonnet] T-AN-08 repo SQL 可移植化：`chunks_by_ids`/`chunks_by_indexes` 的 `ANY()` → `IN` + `bindparam(expanding=True)`（引用鏈上兩函式原零測試覆蓋）；新增 tests/test_repo.py（10 測試，真 SQLite DB）；拆 test_list_annotations 的 12 處 test double 改跑真 SQL；requirements 補 aiosqlite（conftest 既有隱性依賴）。驗證：pytest **109 passed**、真 Postgres 容器內 parity 實測（含 -1/未知 index 靜默跳過）。
+- [x] [sonnet] T-AN-09 點擊標註操作選單（使用者需求：像 Word 直接在原文上操作，不必繞筆記面板）：collapsed click 對該頁標註 bbox 命中測試（÷scale 回 pt、2pt 容差、重疊取最晚建立），彈出〔4 色換色｜問 AI｜編輯備註｜刪除〕；標註層維持 pointer-events:none、選字流程零影響；「問 AI」走 requestSelectionAsk 帶原文+備註入對話。瀏覽器實測 8 項全過（換色即時、問 AI 帶文、備註保存、刪除同步、空白不彈、選字不變）。
 
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
