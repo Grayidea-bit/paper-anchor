@@ -9,6 +9,9 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // Docker bind mount（尤其 Windows/WSL）原生檔案事件常收不到 → 改用輪詢
+    // 監看，否則改前端原始碼 HMR 不觸發、須手動重啟 web 容器。
+    watch: { usePolling: true, interval: 300 },
     proxy: {
       "/api": { target: apiTarget, changeOrigin: true },
       "/healthz": { target: apiTarget, changeOrigin: true },
