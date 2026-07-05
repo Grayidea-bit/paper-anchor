@@ -74,6 +74,7 @@ function Chat({ context }: { context: ChatContext }) {
   const [convId, setConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [input, setInput] = useState("");
+  const [multiline, setMultiline] = useState(false);
   const [attached, setAttached] = useState<Attached | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +152,17 @@ function Chat({ context }: { context: ChatContext }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streaming]);
+
+  // textarea 自動長高 + ChatGPT 式版型切換：
+  // 單行 → 全部同列；換行（含 Shift+Enter 或軟換行）→ textarea 獨佔上列、控制項落下列。
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+    // 單行 scrollHeight ≈ 34（padding16+line18）；> 44 視為多行
+    setMultiline(input.includes("\n") || el.scrollHeight > 44);
+  }, [input]);
 
   const sendQuestion = useCallback(
     async (question: string, selection: Attached | null) => {
@@ -409,7 +421,7 @@ function Chat({ context }: { context: ChatContext }) {
           </button>
         </div>
       )}
-      <div className={styles.inputRow}>
+      <div className={`${styles.inputRow}${multiline ? ` ${styles.multiline}` : ""}`}>
         <button
           className={styles.newConvBtn}
           title={t.newConversation}
@@ -418,28 +430,11 @@ function Chat({ context }: { context: ChatContext }) {
         >
           ＋
         </button>
-        {modelOptions.length > 1 && (
-          <select
-            className={styles.modelSelect}
-            title={t.chatModelLabel}
-            aria-label={t.chatModelLabel}
-            value={selectedModel ?? ""}
-            disabled={convId === null}
-            onChange={(e) => void changeModel(e.target.value)}
-          >
-            <option value="">{t.modelDefault}</option>
-            {modelOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        )}
         <textarea
           ref={inputRef}
           className={styles.input}
           placeholder={t.inputPlaceholder}
-          rows={2}
+          rows={1}
           value={input}
           disabled={convId === null}
           onChange={(e) => setInput(e.target.value)}
@@ -450,14 +445,33 @@ function Chat({ context }: { context: ChatContext }) {
             }
           }}
         />
-        <button
-          className={styles.send}
-          title={t.send}
-          disabled={streaming || !input.trim() || convId === null}
-          onClick={() => void send()}
-        >
-          {streaming ? "…" : "↑"}
-        </button>
+        <div className={styles.trailing}>
+          {modelOptions.length > 1 && (
+            <select
+              className={styles.modelSelect}
+              title={t.chatModelLabel}
+              aria-label={t.chatModelLabel}
+              value={selectedModel ?? ""}
+              disabled={convId === null}
+              onChange={(e) => void changeModel(e.target.value)}
+            >
+              <option value="">{t.modelDefault}</option>
+              {modelOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            className={styles.send}
+            title={t.send}
+            disabled={streaming || !input.trim() || convId === null}
+            onClick={() => void send()}
+          >
+            {streaming ? "…" : "↑"}
+          </button>
+        </div>
       </div>
     </section>
   );
