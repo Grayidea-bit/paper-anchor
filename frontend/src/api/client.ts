@@ -117,6 +117,7 @@ export interface GlossaryEntry {
   document_id: number;
   term: string;
   translation: string;
+  notes: string;
   target_lang: string;
   page: number;
   bbox_list: BBox[];
@@ -129,6 +130,8 @@ export interface GlossaryCreate {
   page: number;
   bbox_list: BBox[];
   chunk_id: number | null;
+  /** 詳細翻譯回答全文（≤8000）：帶了後端會萃取簡潔譯文＋白話註解 */
+  source_text?: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

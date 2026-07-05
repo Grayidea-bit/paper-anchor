@@ -566,6 +566,44 @@
   color: var(--text-faint);
 }
 
+/* ---- 翻譯回答尾部「加入翻譯表」 ---- */
+
+.addToGlossaryBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font: 500 11px var(--sans);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color 0.13s ease, border-color 0.13s ease;
+}
+
+.addToGlossaryBtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.addToGlossaryBtn[data-status="adding"] {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.addToGlossaryBtn[data-status="added"] {
+  color: var(--text-faint);
+  cursor: default;
+  border-color: var(--hairline);
+}
+
+.addToGlossaryBtn[data-status="error"] {
+  border-color: var(--error);
+  color: var(--error);
+}
+
 /* ---- 導讀卡 ---- */
 
 .digestCard {

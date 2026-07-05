@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Square } from "lucide-react";
+import { Square, Languages } from "lucide-react";
 import styles from "./ChatPane.module.css";
 import {
   CLAUDE_MODELS,
@@ -15,6 +15,7 @@ import {
   regenerateDigest,
   setConversationModel,
   streamMessage,
+  type BBox,
   type ChatBackend,
   type Citation,
   type Conversation,
@@ -26,8 +27,21 @@ import {
   type ChatContext,
   type SelectionAsk,
 } from "../../stores/readerStore";
+import { useGlossaryStore } from "../../stores/glossaryStore";
 import { useT, useUiStore } from "../../i18n";
 import { projectColor } from "../Library/Library";
+
+/** 翻譯回答下方「加入翻譯表」候選：選取過長（>200 字）時不產生候選 */
+const MAX_GLOSSARY_TERM_CHARS = 200;
+
+interface GlossaryCandidate {
+  term: string;
+  page: number;
+  bboxList: BBox[];
+  chunkId: number | null;
+}
+
+type GlossaryStatus = "idle" | "adding" | "added" | "error";
 
 type LocalMessage = Omit<Message, "id" | "created_at"> & {
   pending?: boolean;
@@ -39,6 +53,9 @@ type LocalMessage = Omit<Message, "id" | "created_at"> & {
   toolEvents?: string[];
   /** 使用者主動中斷（保留已收到文字，不視為錯誤） */
   stopped?: boolean;
+  /** 翻譯 preset 且帶錨點時掛上的「加入翻譯表」候選（本 session 內有效） */
+  glossaryCandidate?: GlossaryCandidate;
+  glossaryStatus?: GlossaryStatus;
 };
 type Attached = { text: string; chunkId: number | null };
 
@@ -169,7 +186,11 @@ function Chat({ context }: { context: ChatContext }) {
   }, [input]);
 
   const sendQuestion = useCallback(
-    async (question: string, selection: Attached | null) => {
+    async (
+      question: string,
+      selection: Attached | null,
+      glossaryCandidate?: GlossaryCandidate,
+    ) => {
       if (!question || convId === null || streaming) return;
       setError(null);
       setStreaming(true);
@@ -182,7 +203,15 @@ function Chat({ context }: { context: ChatContext }) {
       setMessages((prev) => [
         ...prev,
         { role: "user", content: question, citations: [], selection: sel },
-        { role: "assistant", content: "", citations: [], pending: true, startedAt },
+        {
+          role: "assistant",
+          content: "",
+          citations: [],
+          pending: true,
+          startedAt,
+          glossaryCandidate,
+          glossaryStatus: glossaryCandidate ? "idle" : undefined,
+        },
       ]);
       const patchLast = (patch: (m: LocalMessage) => LocalMessage) =>
         setMessages((prev) => [...prev.slice(0, -1), patch(prev[prev.length - 1])]);
@@ -288,7 +317,17 @@ function Chat({ context }: { context: ChatContext }) {
       translate: t.presetTranslate,
       critique: t.presetCritique,
     }[req.preset];
-    void sendQuestion(question, sel);
+    // 翻譯 preset 且帶錨點：準備「加入翻譯表」候選（術語過長就不產生候選）
+    const glossaryCandidate: GlossaryCandidate | undefined =
+      req.preset === "translate" && req.anchor && req.text.length <= MAX_GLOSSARY_TERM_CHARS
+        ? {
+            term: req.text.slice(0, MAX_GLOSSARY_TERM_CHARS),
+            page: req.anchor.page,
+            bboxList: req.anchor.bboxList,
+            chunkId: req.chunkId,
+          }
+        : undefined;
+    void sendQuestion(question, sel, glossaryCandidate);
   }, [selectionAsk, convId, streaming, isDocument, clearSelectionAsk, sendQuestion, t]);
 
   const newConversation = useCallback(async () => {
@@ -335,6 +374,37 @@ function Chat({ context }: { context: ChatContext }) {
       }
     },
     [jumpTo, jumpToDocument, documentId],
+  );
+
+  const glossaryCreate = useGlossaryStore((s) => s.create);
+
+  /** 翻譯回答下方「＋ 加入翻譯表」：把該則回答全文帶給後端萃取譯文＋註解
+   * glossaryStore.create 失敗時只 console.error 並吞掉例外（不 throw），
+   * 故用建立前後的 entries 筆數變化判斷是否成功，藉此讓鈕恢復可重試。 */
+  const addAnswerToGlossary = useCallback(
+    async (index: number) => {
+      const target = messages[index];
+      const candidate = target?.glossaryCandidate;
+      if (!candidate) return;
+      setMessages((prev) =>
+        prev.map((m, i) => (i === index ? { ...m, glossaryStatus: "adding" } : m)),
+      );
+      const before = useGlossaryStore.getState().entries.length;
+      await glossaryCreate({
+        term: candidate.term,
+        page: candidate.page,
+        bbox_list: candidate.bboxList,
+        chunk_id: candidate.chunkId,
+        source_text: target.content.slice(0, 8000),
+      });
+      const succeeded = useGlossaryStore.getState().entries.length > before;
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === index ? { ...m, glossaryStatus: succeeded ? "added" : "error" } : m,
+        ),
+      );
+    },
+    [messages, glossaryCreate],
   );
 
   return (
@@ -409,6 +479,30 @@ function Chat({ context }: { context: ChatContext }) {
                 <ThinkingCard startedAt={m.startedAt ?? Date.now()} reasoning={m.reasoning} />
               )}
               {m.stopped && <span className={styles.stoppedTag}>{t.generationStopped}</span>}
+              {m.role === "assistant" &&
+                !m.pending &&
+                !m.stopped &&
+                m.glossaryCandidate &&
+                m.glossaryStatus && (
+                  <button
+                    type="button"
+                    className={styles.addToGlossaryBtn}
+                    data-status={m.glossaryStatus}
+                    disabled={m.glossaryStatus === "adding" || m.glossaryStatus === "added"}
+                    onClick={() => void addAnswerToGlossary(i)}
+                  >
+                    {m.glossaryStatus === "added" ? (
+                      "✓"
+                    ) : (
+                      <Languages size={12} strokeWidth={2} />
+                    )}
+                    {m.glossaryStatus === "adding"
+                      ? t.translating
+                      : m.glossaryStatus === "added"
+                        ? t.addedToGlossary
+                        : t.addToGlossary}
+                  </button>
+                )}
             </div>
           </div>
         ))}

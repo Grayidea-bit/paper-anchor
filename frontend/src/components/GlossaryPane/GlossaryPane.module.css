@@ -81,6 +81,11 @@
   color: var(--text-faint);
 }
 
+.notes {
+  font: 400 11.5px/1.5 var(--sans);
+  color: var(--text-faint);
+}
+
 .failedWrap {
   display: flex;
   align-items: center;

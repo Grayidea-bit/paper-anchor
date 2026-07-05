@@ -53,7 +53,12 @@ export function GlossaryPane() {
                     </button>
                   </div>
                 ) : (
-                  <span className={styles.translation}>{entry.translation}</span>
+                  <>
+                    <span className={styles.translation}>{entry.translation}</span>
+                    {entry.notes.trim() && (
+                      <span className={styles.notes}>{entry.notes}</span>
+                    )}
+                  </>
                 )}
               </div>
               <button
