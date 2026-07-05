@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Square, Languages } from "lucide-react";
 import styles from "./ChatPane.module.css";
 import {
   CLAUDE_MODELS,
@@ -14,6 +15,7 @@ import {
   regenerateDigest,
   setConversationModel,
   streamMessage,
+  type BBox,
   type ChatBackend,
   type Citation,
   type Conversation,
@@ -25,8 +27,57 @@ import {
   type ChatContext,
   type SelectionAsk,
 } from "../../stores/readerStore";
+import { useGlossaryStore } from "../../stores/glossaryStore";
 import { useT, useUiStore } from "../../i18n";
 import { projectColor } from "../Library/Library";
+
+/** 翻譯回答下方「加入翻譯表」候選：選取過長（>200 字）時不產生候選 */
+const MAX_GLOSSARY_TERM_CHARS = 200;
+const MAX_GLOSSARY_TRANSLATION_CHARS = 500;
+const MAX_GLOSSARY_NOTES_CHARS = 12000;
+
+/** 純標題行判定：整行去掉常見 markdown 標記後，等於「翻譯」/"Translation" 這類單詞標題 */
+const HEADING_ONLY_RE = /^(翻譯|譯文|translation)$/i;
+
+/** 剝除單行常見 markdown 標記：粗體/斜體、行首井字標題、行首 bullet／blockquote、反引號、包覆的引號 */
+function stripMarkdownInline(line: string): string {
+  return line
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^>+\s?/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim()
+    .replace(/^["「『]([\s\S]*)["」』]$/, "$1")
+    .trim();
+}
+
+/** 從翻譯回答全文抽第一行當譯文：跳過空行、純標題行、以及僅覆誦原術語本身的行
+ * （例如 LLM 常見的 `> "term"` 覆誦句，剝除引號/markdown 後與 term 相同就跳過），
+ * 剝除 markdown 標記後截斷。抽不到（全空）回傳 null，呼叫端 fallback 送 source_text。 */
+function extractFirstLineTranslation(content: string, term?: string): string | null {
+  const termNormalized = term?.trim().toLowerCase();
+  for (const raw of content.split("\n")) {
+    const stripped = stripMarkdownInline(raw);
+    if (!stripped) continue;
+    if (HEADING_ONLY_RE.test(stripped)) continue;
+    if (termNormalized && stripped.toLowerCase() === termNormalized) continue;
+    return stripped.slice(0, MAX_GLOSSARY_TRANSLATION_CHARS);
+  }
+  return null;
+}
+
+interface GlossaryCandidate {
+  term: string;
+  page: number;
+  bboxList: BBox[];
+  chunkId: number | null;
+}
+
+type GlossaryStatus = "idle" | "adding" | "added" | "error";
 
 type LocalMessage = Omit<Message, "id" | "created_at"> & {
   pending?: boolean;
@@ -36,6 +87,11 @@ type LocalMessage = Omit<Message, "id" | "created_at"> & {
   thoughtSeconds?: number;
   /** 工具活動（僅本次串流）：如 "keyword_search:done" */
   toolEvents?: string[];
+  /** 使用者主動中斷（保留已收到文字，不視為錯誤） */
+  stopped?: boolean;
+  /** 翻譯 preset 且帶錨點時掛上的「加入翻譯表」候選（本 session 內有效） */
+  glossaryCandidate?: GlossaryCandidate;
+  glossaryStatus?: GlossaryStatus;
 };
 type Attached = { text: string; chunkId: number | null };
 
@@ -84,6 +140,7 @@ function Chat({ context }: { context: ChatContext }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastFailedRef = useRef<{ question: string; selection: Attached | null } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const isDocument = context.kind === "document";
 
@@ -165,10 +222,16 @@ function Chat({ context }: { context: ChatContext }) {
   }, [input]);
 
   const sendQuestion = useCallback(
-    async (question: string, selection: Attached | null) => {
+    async (
+      question: string,
+      selection: Attached | null,
+      glossaryCandidate?: GlossaryCandidate,
+    ) => {
       if (!question || convId === null || streaming) return;
       setError(null);
       setStreaming(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
       const sel = selection
         ? { text: selection.text, chunk_id: selection.chunkId }
         : undefined;
@@ -176,7 +239,15 @@ function Chat({ context }: { context: ChatContext }) {
       setMessages((prev) => [
         ...prev,
         { role: "user", content: question, citations: [], selection: sel },
-        { role: "assistant", content: "", citations: [], pending: true, startedAt },
+        {
+          role: "assistant",
+          content: "",
+          citations: [],
+          pending: true,
+          startedAt,
+          glossaryCandidate,
+          glossaryStatus: glossaryCandidate ? "idle" : undefined,
+        },
       ]);
       const patchLast = (patch: (m: LocalMessage) => LocalMessage) =>
         setMessages((prev) => [...prev.slice(0, -1), patch(prev[prev.length - 1])]);
@@ -209,6 +280,7 @@ function Chat({ context }: { context: ChatContext }) {
             onCitations: (citations) => patchLast((m) => ({ ...m, citations })),
             onDone: () => patchLast((m) => ({ ...m, pending: false })),
             onError: (message) => {
+              if (controller.signal.aborted) return;
               setError(message);
               lastFailedRef.current = { question, selection };
               setMessages((prev) => {
@@ -219,16 +291,25 @@ function Chat({ context }: { context: ChatContext }) {
               });
             },
           },
-          { language: lang, selection: sel },
+          { language: lang, selection: sel, signal: controller.signal },
         );
+        if (controller.signal.aborted) {
+          // 使用者主動中斷：保留已收到文字，標記已中斷，不視為錯誤
+          patchLast((m) => ({ ...m, pending: false, stopped: true }));
+        }
       } catch (e) {
-        setError((e as Error).message);
+        if (!controller.signal.aborted) setError((e as Error).message);
       } finally {
+        if (abortRef.current === controller) abortRef.current = null;
         setStreaming(false);
       }
     },
     [convId, streaming, lang],
   );
+
+  const stopGenerating = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -263,7 +344,8 @@ function Chat({ context }: { context: ChatContext }) {
     const sel = { text: req.text, chunkId: req.chunkId };
     if (req.preset === "free") {
       setAttached(sel);
-      inputRef.current?.focus();
+      // 圈選自動附掛：不搶焦點（使用者可能還在 PDF 側繼續圈選/標註）
+      if (!req.auto) inputRef.current?.focus();
       return;
     }
     const question = {
@@ -271,7 +353,17 @@ function Chat({ context }: { context: ChatContext }) {
       translate: t.presetTranslate,
       critique: t.presetCritique,
     }[req.preset];
-    void sendQuestion(question, sel);
+    // 翻譯 preset 且帶錨點：準備「加入翻譯表」候選（術語過長就不產生候選）
+    const glossaryCandidate: GlossaryCandidate | undefined =
+      req.preset === "translate" && req.anchor && req.text.length <= MAX_GLOSSARY_TERM_CHARS
+        ? {
+            term: req.text.slice(0, MAX_GLOSSARY_TERM_CHARS),
+            page: req.anchor.page,
+            bboxList: req.anchor.bboxList,
+            chunkId: req.chunkId,
+          }
+        : undefined;
+    void sendQuestion(question, sel, glossaryCandidate);
   }, [selectionAsk, convId, streaming, isDocument, clearSelectionAsk, sendQuestion, t]);
 
   const newConversation = useCallback(async () => {
@@ -318,6 +410,42 @@ function Chat({ context }: { context: ChatContext }) {
       }
     },
     [jumpTo, jumpToDocument, documentId],
+  );
+
+  const glossaryCreate = useGlossaryStore((s) => s.create);
+
+  /** 翻譯回答下方「＋ 加入翻譯表」：前端直接從回答全文抽第一行當譯文，notes 存全文，
+   * 帶 translation 給後端即可直存、不打 LLM，瞬間完成。抽不到譯文（全空）才 fallback
+   * 送 source_text 讓後端走舊的 LLM 萃取路徑。
+   * glossaryStore.create 失敗時只 console.error 並吞掉例外（不 throw），
+   * 故用建立前後的 entries 筆數變化判斷是否成功，藉此讓鈕恢復可重試。 */
+  const addAnswerToGlossary = useCallback(
+    async (index: number) => {
+      const target = messages[index];
+      const candidate = target?.glossaryCandidate;
+      if (!candidate) return;
+      setMessages((prev) =>
+        prev.map((m, i) => (i === index ? { ...m, glossaryStatus: "adding" } : m)),
+      );
+      const before = useGlossaryStore.getState().entries.length;
+      const translation = extractFirstLineTranslation(target.content, candidate.term);
+      await glossaryCreate({
+        term: candidate.term,
+        page: candidate.page,
+        bbox_list: candidate.bboxList,
+        chunk_id: candidate.chunkId,
+        ...(translation !== null
+          ? { translation, notes: target.content.slice(0, MAX_GLOSSARY_NOTES_CHARS) }
+          : { source_text: target.content.slice(0, 8000) }),
+      });
+      const succeeded = useGlossaryStore.getState().entries.length > before;
+      setMessages((prev) =>
+        prev.map((m, i) =>
+          i === index ? { ...m, glossaryStatus: succeeded ? "added" : "error" } : m,
+        ),
+      );
+    },
+    [messages, glossaryCreate],
   );
 
   return (
@@ -388,9 +516,34 @@ function Chat({ context }: { context: ChatContext }) {
                   onCite={clickCitation}
                 />
               )}
-              {m.pending && m.content === "" && (
+              {m.pending && m.content === "" && !m.stopped && (
                 <ThinkingCard startedAt={m.startedAt ?? Date.now()} reasoning={m.reasoning} />
               )}
+              {m.stopped && <span className={styles.stoppedTag}>{t.generationStopped}</span>}
+              {m.role === "assistant" &&
+                !m.pending &&
+                !m.stopped &&
+                m.glossaryCandidate &&
+                m.glossaryStatus && (
+                  <button
+                    type="button"
+                    className={styles.addToGlossaryBtn}
+                    data-status={m.glossaryStatus}
+                    disabled={m.glossaryStatus === "adding" || m.glossaryStatus === "added"}
+                    onClick={() => void addAnswerToGlossary(i)}
+                  >
+                    {m.glossaryStatus === "added" ? (
+                      "✓"
+                    ) : (
+                      <Languages size={12} strokeWidth={2} />
+                    )}
+                    {m.glossaryStatus === "adding"
+                      ? t.translating
+                      : m.glossaryStatus === "added"
+                        ? t.addedToGlossary
+                        : t.addToGlossary}
+                  </button>
+                )}
             </div>
           </div>
         ))}
@@ -463,14 +616,24 @@ function Chat({ context }: { context: ChatContext }) {
               ))}
             </select>
           )}
-          <button
-            className={styles.send}
-            title={t.send}
-            disabled={streaming || !input.trim() || convId === null}
-            onClick={() => void send()}
-          >
-            {streaming ? "…" : "↑"}
-          </button>
+          {streaming ? (
+            <button
+              className={`${styles.send} ${styles.stop}`}
+              title={t.stopGenerating}
+              onClick={stopGenerating}
+            >
+              <Square size={14} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              className={styles.send}
+              title={t.send}
+              disabled={!input.trim() || convId === null}
+              onClick={() => void send()}
+            >
+              ↑
+            </button>
+          )}
         </div>
       </div>
     </section>
@@ -590,6 +753,16 @@ function MarkdownWithCitations({ content, citations, onCite }: ContentProps) {
       >
         {prepared}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+/** 純 markdown 渲染（無引用 chip）：供翻譯表懸浮視窗顯示 notes 全文用，
+ * 沿用 ChatPane 同一套 react-markdown + remark-gfm + .md 樣式，維持視覺一致。 */
+export function SimpleMarkdown({ content }: { content: string }) {
+  return (
+    <div className={styles.md}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
 }

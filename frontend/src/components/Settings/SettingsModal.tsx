@@ -12,7 +12,13 @@ import {
   type ToolInfo,
   type Usage,
 } from "../../api/client";
-import { LANG_OPTIONS, THEME_OPTIONS, useT, useUiStore } from "../../i18n";
+import {
+  LANG_OPTIONS,
+  THEME_OPTIONS,
+  TRANSLATION_TARGET_LANG_OPTIONS,
+  useT,
+  useUiStore,
+} from "../../i18n";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const t = useT();
@@ -256,6 +262,25 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 </button>
               ))}
             </div>
+            <h3 className={styles.sectionTitle} style={{ marginTop: 14 }}>
+              {t.translationTargetLang}
+            </h3>
+            <input
+              className={styles.input}
+              type="text"
+              maxLength={60}
+              list="translation-lang-suggestions"
+              placeholder="繁體中文"
+              value={patch.translation_target_lang ?? view?.translation_target_lang ?? ""}
+              onChange={(e) =>
+                setPatch({ ...patch, translation_target_lang: e.target.value })
+              }
+            />
+            <datalist id="translation-lang-suggestions">
+              {TRANSLATION_TARGET_LANG_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} />
+              ))}
+            </datalist>
           </section>
 
           {/* 工具 */}

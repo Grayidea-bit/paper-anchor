@@ -120,6 +120,37 @@
     - 無 model 新對話、settings 不含 llm_chat_models 時，無報錯且能以預設模型對話
   - digest 與 healthz 用 llm 預設鏈，對話記錄鎖定為 conversations.model
 
+### M10 — 使用者標註（底線／底色／註解 + 筆記面板 + AI 讀取標註）2026-07-05
+- **目標**：PDF 工具列模式化〔游標｜底線｜底色｜縮放〕+ 4 色盤；游標選單加「加註解」；右欄「對話/筆記」分頁籤，筆記可跳回圈選範圍；`list_annotations` 工具讓 AI 總結使用者畫線重點。設計全文見計畫檔（annotations 表複用 page+bbox_list 座標語言，與引用鏈同構、零接觸）。
+- [x] [haiku] T-AN-01 資料層+API：migration 005_annotations、repo CRUD+scoped、routers/annotations.py、docs §4/§5/D8、tests/test_annotations.py
+- [x] [haiku] T-AN-02 前端 API+store：client.ts Annotation types+4 函式、annotationStore.ts、i18n 字串（依賴 01 介面）
+- [x] [opus] T-AN-03 座標換算+渲染層：selectionBBox.ts（DOM rects → PDF pt、清洗合併）、PageCanvas data-scale、三種標註樣式、與 citation 高亮共存（依賴 02）
+- [x] [sonnet] T-AN-04 工具列+建立流程：模式切換 UI、色盤、underline/highlight 直接建立、「加註解」popover（依賴 03）
+- [x] [sonnet] T-AN-05 筆記面板：RightPane 分頁籤（ChatPane keep-mounted）、NotesPane 列表/跳轉/刪除/編輯（依賴 02，可與 03/04 並行）
+- [x] [sonnet] T-AN-06 list_annotations 工具：app/tools/ + repo scoped 查詢 + tests mock（依賴 01）
+- [x] [opus] T-AN-07 整合審查+回歸：全鏈驗收、eval_citations 回歸、雙主題目測、本節勾選
+- **DoD**：✅ 全部達成（2026-07-05）。pytest **99 passed**（annotations CRUD/422/級聯 + list_annotations scope 隔離）、ruff/format 全綠、`npm run build`（容器內 tsc+vite）過；migration 005 套用、annotations 表結構符合規格。**eval_citations 15/15 不退化**（claude-sdk 後端實跑，鐵律 1 守住）。API roundtrip 四端點全對（201×3/422/list/PATCH/204×3/404）；`/api/tools` 含 list_annotations。瀏覽器 E2E 全 PASS：底線→底色換色→游標加註解三筆建立、筆記籤三種 icon+色點+note 顯示、點跳轉命中、刪除、**重載原位重現**、**zoom 150% 底色框精準對齊**。
+- 發現事項/當場修正：T-AN-04 加註解在座標換算失敗時 `bbox_list:[]` 會觸發後端 422 並被 store 靜默吞掉，使用者誤以為已存 → **已修**（bbox 無效時「加註解」鈕 disabled + popover 儲存禁用 + 提示文字）。其餘遺留（CRUD 失敗無 toast、空 bbox note 跳轉無框）記於 `docs/reviews/M10.md`，不擋 v1。
+- **試玩回饋追加（2026-07-05）**：
+- [x] [sonnet] T-AN-08 repo SQL 可移植化：`chunks_by_ids`/`chunks_by_indexes` 的 `ANY()` → `IN` + `bindparam(expanding=True)`（引用鏈上兩函式原零測試覆蓋）；新增 tests/test_repo.py（10 測試，真 SQLite DB）；拆 test_list_annotations 的 12 處 test double 改跑真 SQL；requirements 補 aiosqlite（conftest 既有隱性依賴）。驗證：pytest **109 passed**、真 Postgres 容器內 parity 實測（含 -1/未知 index 靜默跳過）。
+- [x] [sonnet] T-AN-09 點擊標註操作選單（使用者需求：像 Word 直接在原文上操作，不必繞筆記面板）：collapsed click 對該頁標註 bbox 命中測試（÷scale 回 pt、2pt 容差、重疊取最晚建立），彈出〔4 色換色｜問 AI｜編輯備註｜刪除〕；標註層維持 pointer-events:none、選字流程零影響；「問 AI」走 requestSelectionAsk 帶原文+備註入對話。瀏覽器實測 8 項全過（換色即時、問 AI 帶文、備註保存、刪除同步、空白不彈、選字不變）。
+- [x] [sonnet] T-AN-10 標註互動改版（使用者試玩後拍板：桌面版「先畫再選」較順手）：移除底線/底色模式與工具列色盤（工具列只留縮放），圈選選單整合〔底線｜背景｜選色｜加註解〕lucide 圖示組＋原 AI 文字動作；ColorDots 共用元件（平常單顆當前色、點開展開 4 色、選色不關選單），annotMenu 同步圖示化；標註「問 AI」改只帶選取區原文。新依賴 lucide-react。瀏覽器實測 8 項全過。
+
+### M11 — 互動打磨 + 翻譯表 2026-07-05（使用者試玩回饋驅動）
+- [x] [sonnet] T-AN-11 對話串流中斷：streamMessage 支援 AbortSignal（abort 靜默返回）；串流中送出鈕變停止方塊；部分文字保留+「已中斷」標記、不觸發重試 UI；後端取消路徑確認不存半答案（零改動）。瀏覽器實測：中斷/續問/重整三情境全過。
+- [x] [sonnet] T-AN-12 圈選自動附掛提問 chip：圈選即掛 chip（chunkId 非同步補填不阻塞選單）、`SelectionAsk.auto` 旗標防搶焦點；選單移除「提問…」鈕。實測：chip 即時、焦點在 BODY、覆蓋語意/手動移除正常。
+- [x] [sonnet] T-TR-01 翻譯表後端：migration 006 glossary_entries（同 annotations 錨定語言）、CRUD+retranslate 端點、`translation_target_lang` 設定鍵（預設繁體中文）、prompts/translate_term.md、services/glossary.py 走既有 llm.chat()（鐵律 3/4）；LLM 失敗降級存空譯文不 500。真 NIM 實測翻譯/換語言/重翻全過；順修 conftest async_client 的 SessionLocal patch 從未生效 bug。
+- [x] [haiku] T-TR-02 前端資料層：client GlossaryEntry+4 函式、glossaryStore（creating 旗標）、SettingsModal「翻譯目標語言」segmented（繁中/English/日本語）、i18n 8 鍵。
+- [x] [sonnet] T-TR-03 翻譯表 UI：SelMenu「加入翻譯表」（lucide Languages，>200 字 disabled）、右欄第三分頁〔對話|筆記|翻譯表(M)〕keep-mounted、GlossaryPane（術語|譯文兩欄、失敗重試、點列跳回原文、刪除、空狀態）。真 NIM 全流程瀏覽器實測通過。
+- [x] [sonnet] T-TR-04 條目從對話翻譯萃取：migration 007 加 notes 欄；POST 可帶 source_text（詳細翻譯全文）→ glossary_extract.md prompt 萃取「譯文/註解」兩行（解析失敗降級整段當譯文）；無 source_text 走原直翻。真 LLM 實測萃取正確、舊條目向後相容。
+- [x] [sonnet] T-TR-05 翻譯後加入（取代選單獨立 🌐 鈕，使用者拍板整合）：翻譯 preset 帶 anchor（page/bbox）→ 候選綁定該則回答（session 內）→ 回答下方「＋加入翻譯表」帶全文萃取 → ✓已加入；中斷回答不出鈕；GlossaryPane 顯示 notes。真 LLM 全流程實測。
+- [x] 翻譯目標語言改自由輸入（datalist 建議 + placeholder；任意字串直接進 prompt，空值後端回落預設）。
+- [x] [haiku] T-TR-06 glossary POST 支援前端直接提供 translation/notes（三層優先序，直存路徑零 LLM 呼叫）
+- [x] [sonnet] T-TR-07 加入翻譯表改前端抽取（回答第一行剝 markdown 當譯文、全文存 notes、瞬間完成）+ GlossaryPane 條目懸浮視窗（markdown 完整內容/跳到原文/Esc 關閉）
+- [x] [opus 主持] /code-review 全分支：8 finder 角度 37 候選 → 驗證後 7 成立 4 駁回；已修 4（store 切文獻 stale-response 競態、router 雙 session TOCTOU、ANNOT_COLORS 重複、死鍵 selAsk/cursor）。遺留 3（低優先）：PDFPane 雙 popover 樣板可抽共用、settings 前端→後端方向無 schema 守護（建議 SettingsUpdate 加 extra='forbid'）、glossary 萃取降級未截斷（現已是次要 fallback 路徑）。
+- **DoD**：✅ pytest **143 passed**、ruff/format 全綠、npm run build 過；migrations 006/007 套用 dev DB。
+- 發現事項/修正：~~settings 疑似要重啟 api 才生效~~ → 根因是 **router SettingsUpdate 漏 `translation_target_lang` 欄位**（Pydantic 靜默丟棄未知欄位，PUT 200 但未持久化）——已修＋守護測試（白名單鍵必須有對應 router 欄位，防同類再發）；E2E 驗證 roundtrip 與英文翻譯生效。另 T-TR-01 順修 conftest `async_client` 的 SessionLocal patch 從未生效之既有 bug。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

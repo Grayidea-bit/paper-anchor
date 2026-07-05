@@ -1,4 +1,5 @@
 from app import settings_store
+from app.routers.settings import SettingsUpdate
 
 
 class TestRuntime:
@@ -43,6 +44,28 @@ class TestAllowedKeys:
     def test_llm_chat_models_allowed(self):
         # M9：openai/NIM 來源可選模型清單（對話區下拉）
         assert "llm_chat_models" in settings_store.ALLOWED_KEYS
+
+
+class TestRouterModelCoverage:
+    """守護 router 請求模型與 store 白名單的一致性。
+
+    T-TR-01 曾只加白名單漏加 SettingsUpdate 欄位：Pydantic 靜默丟棄未知欄位，
+    PUT 回 200 但什麼都沒存（GET 不含該鍵、UI 還原、翻譯永遠用預設）。
+    """
+
+    # claude_model：M9 改為每對話選模型後僅存唯讀回落（claude_backend.py），無寫入端點
+    WRITE_EXEMPT = {"claude_model"}
+
+    def test_translation_target_lang_updatable(self):
+        assert "translation_target_lang" in SettingsUpdate.model_fields
+
+    def test_every_allowed_key_has_router_field(self):
+        missing = settings_store.ALLOWED_KEYS - self.WRITE_EXEMPT - set(SettingsUpdate.model_fields)
+        assert not missing, f"白名單鍵缺 SettingsUpdate 欄位（PUT 會被靜默丟棄）: {missing}"
+
+    def test_update_payload_passthrough(self):
+        body = SettingsUpdate(translation_target_lang="English")
+        assert body.model_dump(exclude_none=True) == {"translation_target_lang": "English"}
 
 
 class TestClaudeSecretKeys:

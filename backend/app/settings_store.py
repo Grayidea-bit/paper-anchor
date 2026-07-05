@@ -25,6 +25,8 @@ ALLOWED_KEYS = {
     "claude_model",  # 別名 "sonnet"/"opus"/"haiku" 或完整 id
     # M9：openai/NIM 來源的可選模型清單（對話區下拉；JSON 陣列）
     "llm_chat_models",
+    # T-TR-01：翻譯表目標語言（顯示用字串，直接進 prompt；缺省回落「繁體中文」）
+    "translation_target_lang",
 }
 SECRET_KEYS = {"llm_api_key", "claude_oauth_token"}
 
@@ -57,9 +59,7 @@ async def update(values: dict) -> dict:
             if key not in ALLOWED_KEYS:
                 continue
             if value in ("", None):
-                await session.execute(
-                    text("DELETE FROM settings WHERE key = :key"), {"key": key}
-                )
+                await session.execute(text("DELETE FROM settings WHERE key = :key"), {"key": key})
                 _cache.pop(key, None)
             else:
                 await session.execute(

@@ -1,6 +1,6 @@
 """煙霧測試：NIM + deepseek-v4-flash + Pydantic AI tool calling（一次性，不入版控決策前）。
 
-    python -m scripts.smoke_pydantic_ai
+python -m scripts.smoke_pydantic_ai
 """
 
 import asyncio

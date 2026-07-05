@@ -83,6 +83,61 @@ export interface Chunk {
   bbox_list: [number, number, number, number][];
 }
 
+export type AnnotationType = "underline" | "highlight" | "note";
+export type AnnotationColor = "amber" | "terracotta" | "sage" | "slate";
+
+export interface Annotation {
+  id: number;
+  document_id: number;
+  type: AnnotationType;
+  color: AnnotationColor;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+  selected_text: string;
+  note_text: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnotationCreate {
+  type: AnnotationType;
+  color: AnnotationColor;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+  selected_text: string;
+  note_text?: string;
+}
+
+// ---- glossary ----
+
+export interface GlossaryEntry {
+  id: number;
+  document_id: number;
+  term: string;
+  translation: string;
+  notes: string;
+  target_lang: string;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+  created_at: string;
+}
+
+export interface GlossaryCreate {
+  term: string;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+  /** 詳細翻譯回答全文（≤8000）：帶了後端會萃取簡潔譯文＋白話註解（僅在未帶 translation 時使用） */
+  source_text?: string;
+  /** 前端直接抽取的譯文（≤500）：帶了後端直存，不打 LLM */
+  translation?: string;
+  /** 回答全文（markdown，≤12000）：搭配 translation 一起直存 */
+  notes?: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, init);
   if (!resp.ok) {
@@ -135,6 +190,7 @@ export interface SettingsView {
   system_prompt_extra?: string;
   chat_backend?: ChatBackend;
   claude_oauth_token_set: boolean;
+  translation_target_lang?: string;
   defaults: {
     llm_base_url: string;
     llm_chat_model: string;
@@ -151,6 +207,7 @@ export interface SettingsPatch {
   system_prompt_extra?: string;
   chat_backend?: ChatBackend;
   claude_oauth_token?: string;
+  translation_target_lang?: string;
 }
 
 export interface ToolInfo {
@@ -317,24 +374,38 @@ export interface StreamHandlers {
 export interface StreamOptions {
   selection?: { text: string; chunk_id: number | null };
   language?: string;
+  /** 傳入後可用 controller.abort() 中斷串流；中斷時靜默結束，不觸發 onError */
+  signal?: AbortSignal;
 }
 
-/** POST 提問並解析 SSE 串流（token* → citations → done | error） */
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
+/** POST 提問並解析 SSE 串流（token* → citations → done | error）。
+ * 若 options.signal 被 abort：靜默 return，不呼叫 onError（呼叫端自行處理 UI）。 */
 export async function streamMessage(
   convId: number,
   content: string,
   handlers: StreamHandlers,
   options: StreamOptions = {},
 ): Promise<void> {
-  const resp = await fetch(`/api/conversations/${convId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content,
-      selection: options.selection,
-      language: options.language,
-    }),
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`/api/conversations/${convId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content,
+        selection: options.selection,
+        language: options.language,
+      }),
+      signal: options.signal,
+    });
+  } catch (e) {
+    if (isAbortError(e)) return;
+    throw e;
+  }
   if (!resp.ok || !resp.body) {
     handlers.onError(`API ${resp.status}`);
     return;
@@ -364,15 +435,80 @@ export async function streamMessage(
       handlers.onError(payload.message as string);
     }
   };
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let sep;
-    while ((sep = buf.indexOf("\n\n")) >= 0) {
-      dispatch(buf.slice(0, sep));
-      buf = buf.slice(sep + 2);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buf.indexOf("\n\n")) >= 0) {
+        dispatch(buf.slice(0, sep));
+        buf = buf.slice(sep + 2);
+      }
     }
+  } catch (e) {
+    if (isAbortError(e) || options.signal?.aborted) return;
+    throw e;
   }
-  if (!ended) handlers.onError("連線中斷");
+  if (ended) return;
+  if (options.signal?.aborted) return;
+  handlers.onError("連線中斷");
+}
+
+// ---- annotations ----
+
+export function listAnnotations(documentId: number): Promise<Annotation[]> {
+  return request<Annotation[]>(`/api/documents/${documentId}/annotations`);
+}
+
+export function createAnnotation(
+  documentId: number,
+  input: AnnotationCreate,
+): Promise<Annotation> {
+  return request<Annotation>(`/api/documents/${documentId}/annotations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateAnnotation(
+  id: number,
+  patch: { note_text?: string; color?: AnnotationColor },
+): Promise<Annotation> {
+  return request<Annotation>(`/api/annotations/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteAnnotation(id: number): Promise<void> {
+  return request<void>(`/api/annotations/${id}`, { method: "DELETE" });
+}
+
+export function listGlossary(documentId: number): Promise<GlossaryEntry[]> {
+  return request<GlossaryEntry[]>(`/api/documents/${documentId}/glossary`);
+}
+
+export function createGlossaryEntry(
+  documentId: number,
+  input: GlossaryCreate,
+): Promise<GlossaryEntry> {
+  return request<GlossaryEntry>(`/api/documents/${documentId}/glossary`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function retranslateGlossaryEntry(id: number): Promise<GlossaryEntry> {
+  return request<GlossaryEntry>(`/api/glossary/${id}/retranslate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export function deleteGlossaryEntry(id: number): Promise<void> {
+  return request<void>(`/api/glossary/${id}`, { method: "DELETE" });
 }

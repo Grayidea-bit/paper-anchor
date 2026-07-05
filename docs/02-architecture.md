@@ -89,6 +89,31 @@
 - **安全底線**：無啟用工具 → 不帶 toolsets，管線行為與純串流一致。**降級保險**：帶工具請求在未輸出前收到 4xx → 剝除工具重試（防供應商不支援 function calling）。輪數上限 `UsageLimits(request_limit=5)`（含首輪＝最多 4 輪工具）。
 - **執行期設定**（settings 表 + `settings_store` 快取）：chat 的 base_url/api_key/model、附加 system prompt；API key 永不回傳明文。工具過程訊息不入庫（同 reasoning 先例）。
 
+### D8 使用者標註（T-AN-01；T-AN-06 擴展工具）
+- **錨定設計**：前端把 DOM selection（滑鼠/觸控選取）換算成 PDF 座標系的 bbox（四元組 `[x0,y0,x1,y1]` in PDF points），連同頁碼、type/color/text 存 DB（`annotations` 表）。bbox 渲染時同 citation 機制乘以頁面縮放係數疊加高亮層，不碰 chunks 引用鏈（鐵律 1）。
+- **顏色策略**：存語義 key（`'amber'|'terracotta'|'sage'|'slate'`），由前端主題系統解析為實際 RGB，支援深色模式。
+- **chunk 引用加值**：optional `chunk_id` 指向最相關 chunk（AI 工具用），刪 chunk 時 SET NULL 不連坐（annotations 自立存在）。
+- **CRUD 端點**（T-AN-01）
+  - `GET /api/documents/{id}/annotations` — 列表（按 page 與 created_at 排序）
+  - `POST /api/documents/{id}/annotations` — 建立 → 201
+  - `PATCH /api/annotations/{id}` — 部分更新（note_text/color），touch updated_at
+  - `DELETE /api/annotations/{id}` → 204
+- **AI 工具化**（T-AN-06）：`repo.list_annotations_scoped(document_id=*, project_id=*, type_filter=*, limit=50)` 為工具提供 scope 隔離查詢；結果可含全文搜尋、統計等擴展。
+
+### D9 翻譯表（glossary）（T-TR-01 / T-TR-04）
+- **錨定設計同 annotations**：使用者於 PDF 圈選術語 →「加入翻譯表」，前端換算 bbox（PDF 座標系）連同頁碼、chunk_id 送後端；`glossary_entries` 表結構與 annotations 同源（`page`/`bbox_list`/`chunk_id`），不碰 chunks 引用鏈本身（鐵律 1）。
+- **目標語言設定**：`settings_store` 白名單鍵 `translation_target_lang`（非 secret），值為顯示用字串（如「繁體中文」「English」「日本語」）直接進 prompt；未設定時服務層回落預設 `"繁體中文"`。
+- **建立優先序（T-TR-04 / T-TR-06）**：
+  1. **前端直接提供譯文（T-TR-06，最高優先）**：POST 帶 `translation` 欄位（max 500 字）時直接存庫，不打 LLM；`notes` 可同時提供（max 12000 字，無則預設空字串）。適用「翻譯回答抽取」流程：前端自行從翻譯結果第一行抽 translation、整份回答當 notes，加速條目建立。
+  2. **從對話萃取（主路徑）**：POST 帶 `source_text`（對話「翻譯」動作的詳細翻譯全文，max 8000 字）但無 `translation` 時，`services/glossary.py` 套用 `app/prompts/glossary_extract.md`（帶術語、目標語言、`source_text`）→ 呼叫 `llm.chat()` → 解析固定格式「譯文：/註解：」兩行 → `translation` + `notes` 入庫。解析失敗（LLM 未照格式回覆）降級：整段 `strip()` 當 `translation`，`notes` 存空字串。
+  3. **直接圈選加入（fallback）**：不帶 `source_text` 且無 `translation` 時行為與 T-TR-01 相同——若有 `chunk_id` 撈該 chunk 內容截前 800 字當上下文 → 套用 `app/prompts/translate_term.md` → 呼叫 `llm.chat()`（既有非串流 helper，鐵律 3；未新增 llm.py 函式）→ 譯文 `strip()` 後存庫，`notes` 存空字串。
+- **失敗降級**：LLM 呼叫失敗時條目仍建立（或 retranslate 時保留舊譯文），`translation`/`notes` 存空字串，不擲例外、不讓請求 500；前端可用 retranslate 端點重試或換目標語言後重打（retranslate 僅重打 `translation`，`notes` 不動）。
+- **CRUD 端點**
+  - `GET /api/documents/{id}/glossary` — 條目列表（按 page 與 created_at 排序）
+  - `POST /api/documents/{id}/glossary` — 建立條目 → 201（含首次翻譯結果；body 可選 `source_text` 觸發從對話萃取路徑）
+  - `POST /api/glossary/{entry_id}/retranslate` — 重打一次翻譯並更新（僅更新 `translation`）
+  - `DELETE /api/glossary/{entry_id}` → 204
+
 #### 後端分派（M8：Claude Agent SDK 後端）
 - **設定鍵 `chat_backend`**：settings 表值為 `'openai'`（NIM／OpenAI 相容，預設）或 `'claude-sdk'`（Claude Agent SDK）；使用者於設定頁切換。
 - **路由分派**：`agent.stream_chat()` 開頭讀 `chat_backend`：`'openai'` 續用既有 Pydantic AI 路徑（一行不動）；`'claude-sdk'` 委派 `services/claude_backend.py`，把 SDK 訊息/事件流映射為同一協定（token/reasoning/tool/context_chunks/usage）——router/SSE/引用鏈/前端零改動。範圍僅 chat；digest/embedding 續走 llm.py（Claude 無 embedding API）。
@@ -118,16 +143,50 @@ documents    (id, user_id, project_id NULL→未分類, title, filename, file_pa
               page_count, status, error_msg, digest JSONB, token_usage JSONB, created_at)
 chunks       (id, document_id, chunk_index, page, section,
               content TEXT, bbox_list JSONB, embedding VECTOR(1024))  -- 維度=EMBED_DIM
+annotations  (id, document_id, type, color, page, bbox_list JSONB,
+              chunk_id NULL, selected_text, note_text, created_at, updated_at)  -- T-AN-01
+glossary_entries (id, document_id, term, translation, target_lang, page,
+              bbox_list JSONB, chunk_id NULL, notes TEXT, created_at)         -- T-TR-01 / T-TR-04
 conversations(id, scope('document'|'project'|'library'),
               document_id NULL, project_id NULL,        -- 互斥 CHECK 對應 scope
-              title, created_at)
+              title, model NULL, created_at)            -- model 為 NULL 時回落
 messages     (id, conversation_id, role, content TEXT,
               citations JSONB,      -- [{label, chunk_id, chunk_index, page, bbox_list,
                                     --   document_id, document_title}]
               selection JSONB,      -- 選取提問時的 {text, chunk_id}（僅 document scope）
               token_usage JSONB, created_at)
 ```
-索引：`chunks(document_id)`、`chunks USING ivfflat (embedding vector_cosine_ops)`、`messages(conversation_id)`。
+
+### annotations 表詳解（T-AN-01）
+| 欄位 | 型態 | 說明 |
+|---|---|---|
+| id | BIGINT PK | 自增 ID |
+| document_id | BIGINT FK | 所屬文獻（CASCADE） |
+| type | TEXT | `'underline'\|'highlight'\|'note'` |
+| color | TEXT | `'amber'\|'terracotta'\|'sage'\|'slate'`，存語義 key，前端解析為顏色 |
+| page | INT | 所在頁碼（≥1） |
+| bbox_list | JSONB | `[[x0,y0,x1,y1], ...]`，PDF 座標系（points），最少一個 |
+| chunk_id | BIGINT FK | 可選；指向相關 chunk（SET NULL）——AI 工具用 |
+| selected_text | TEXT | 選取的原文（max 3000 字） |
+| note_text | TEXT | 使用者註記（max 2000 字）；type='note' 時必填 |
+| created_at | TIMESTAMPTZ | 建立時間 |
+| updated_at | TIMESTAMPTZ | 最後修改時間（PATCH 時 touch） |
+
+### glossary_entries 表詳解（T-TR-01 / T-TR-04）
+| 欄位 | 型態 | 說明 |
+|---|---|---|
+| id | BIGINT PK | 自增 ID |
+| document_id | BIGINT FK | 所屬文獻（CASCADE） |
+| term | TEXT | 使用者圈選的原文術語 |
+| translation | TEXT | LLM 譯文（術語層級）；LLM 失敗或解析失敗時為空字串，可 retranslate 重試 |
+| target_lang | TEXT | 建立當下的目標語言（顯示字串，如「繁體中文」），換設定不回溯改舊條目 |
+| page | INT | 所在頁碼（≥1） |
+| bbox_list | JSONB | `[[x0,y0,x1,y1], ...]`，PDF 座標系（points），最少一個 |
+| chunk_id | BIGINT FK | 可選；指向所在 chunk（SET NULL），供翻譯上下文與未來 AI 工具用 |
+| notes | TEXT | 一到兩句白話補充說明（T-TR-04）；僅當建立時帶 `source_text` 且 LLM 成功依格式回覆才有值，否則為空字串；`retranslate` 不會更動此欄 |
+| created_at | TIMESTAMPTZ | 建立時間 |
+
+索引：`chunks(document_id)`、`chunks USING ivfflat (embedding vector_cosine_ops)`、`messages(conversation_id)`、`annotations(document_id)`、`glossary_entries(document_id)`。
 
 ## 5. API 規格（摘要）
 
@@ -138,6 +197,14 @@ messages     (id, conversation_id, role, content TEXT,
 | GET | /api/documents/{id} | 詳情（含 status/digest，供輪詢） |
 | GET | /api/documents/{id}/file | 取 PDF 原檔（供 PDF.js 渲染） |
 | DELETE | /api/documents/{id} | 刪除（含 chunks/conversations 級聯） |
+| GET | /api/documents/{id}/annotations | 文獻標註列表（T-AN-01） |
+| POST | /api/documents/{id}/annotations | 建立標註 → 201（T-AN-01） |
+| PATCH | /api/annotations/{id} | 更新標註 {note_text?, color?}（T-AN-01） |
+| DELETE | /api/annotations/{id} | 刪除標註 → 204（T-AN-01） |
+| GET | /api/documents/{id}/glossary | 文獻翻譯表列表（T-TR-01） |
+| POST | /api/documents/{id}/glossary | 建立翻譯表條目 → 201；優先序（T-TR-06）：`translation` 欄位提供時直存（不打 LLM），否則看 `source_text`（萃取譯文+註解）或直翻；body 可選 `translation`（max 500）、`notes`（max 12000）、`source_text`（max 8000）（T-TR-01 / T-TR-04 / T-TR-06） |
+| POST | /api/glossary/{entry_id}/retranslate | 重打一次翻譯並更新（T-TR-01） |
+| DELETE | /api/glossary/{entry_id} | 刪除翻譯表條目 → 204（T-TR-01） |
 | GET | /api/documents/{id}/conversations | 對話串列表（document scope） |
 | POST | /api/documents/{id}/conversations | 建立對話串（document scope） |
 | PATCH | /api/documents/{id} | 指派/移出專案 {project_id: int\|null} |

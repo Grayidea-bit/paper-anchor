@@ -95,9 +95,7 @@ class DocumentPatch(BaseModel):
 async def patch_document(doc_id: int, body: DocumentPatch) -> dict:
     """指派/移出專案（project_id=null → 未分類）。"""
     async with SessionLocal() as session:
-        if body.project_id is not None and await repo.get_project(
-            session, body.project_id
-        ) is None:
+        if body.project_id is not None and await repo.get_project(session, body.project_id) is None:
             raise NotFoundError("project", body.project_id)
         if not await repo.set_document_project(session, doc_id, body.project_id):
             raise NotFoundError("document", doc_id)

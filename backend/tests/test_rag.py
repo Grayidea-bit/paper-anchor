@@ -6,12 +6,22 @@ from app.services.rag import build_messages, parse_citations
 
 CHUNKS = [
     {
-        "id": 101, "chunk_index": 3, "page": 2, "content": "方法段",
-        "bbox_list": [[1, 2, 3, 4]], "document_id": 7, "document_title": "Paper A",
+        "id": 101,
+        "chunk_index": 3,
+        "page": 2,
+        "content": "方法段",
+        "bbox_list": [[1, 2, 3, 4]],
+        "document_id": 7,
+        "document_title": "Paper A",
     },
     {
-        "id": 102, "chunk_index": 7, "page": 5, "content": "實驗段",
-        "bbox_list": [[5, 6, 7, 8]], "document_id": 8, "document_title": "Paper B",
+        "id": 102,
+        "chunk_index": 7,
+        "page": 5,
+        "content": "實驗段",
+        "bbox_list": [[5, 6, 7, 8]],
+        "document_id": 8,
+        "document_title": "Paper B",
     },
 ]
 
@@ -67,8 +77,12 @@ class TestBuildMessages:
     def test_document_scope_context(self):
         history = [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}]
         msgs = build_messages(
-            CHUNKS[:1], history, "問題",
-            scope="document", scope_title="Test Paper", selection_text="選取文字",
+            CHUNKS[:1],
+            history,
+            "問題",
+            scope="document",
+            scope_title="Test Paper",
+            selection_text="選取文字",
         )
         assert msgs[0]["role"] == "system"
         assert "# 文獻：Test Paper" in msgs[0]["content"]

@@ -167,11 +167,17 @@ async def test_a_auth() -> bool:
     msgs, err = await _run("回答『pong』，不要多說。", opts)
     s = _summarize_messages(msgs)
     if err or s["auth_error"]:
-        _p("FAIL", "(a) 訂閱 token 認證", f"err={err} auth_error={s['auth_error']}\n"
-           f"counts={s['counts']}")
+        _p(
+            "FAIL",
+            "(a) 訂閱 token 認證",
+            f"err={err} auth_error={s['auth_error']}\ncounts={s['counts']}",
+        )
         return False
-    _p("PASS", "(a) 訂閱 token 認證 (options.env 注入)",
-       f"answer={s['text_head']!r}\ncounts={s['counts']}")
+    _p(
+        "PASS",
+        "(a) 訂閱 token 認證 (options.env 注入)",
+        f"answer={s['text_head']!r}\ncounts={s['counts']}",
+    )
     return True
 
 
@@ -201,9 +207,12 @@ async def test_env_injection() -> None:
         msgs, err = await _run("回 ok", opts)
         s = _summarize_messages(msgs)
         ok = not err and not s["auth_error"]
-        _p("PASS" if ok else "FAIL", "options.env 注入判定（process env 已清 token）",
-           f"認證{'成功→options.env 生效' if ok else '失敗'}；"
-           f"err={err} auth_error={s['auth_error']}")
+        _p(
+            "PASS" if ok else "FAIL",
+            "options.env 注入判定（process env 已清 token）",
+            f"認證{'成功→options.env 生效' if ok else '失敗'}；"
+            f"err={err} auth_error={s['auth_error']}",
+        )
     finally:
         os.environ.update(saved)
 
@@ -230,21 +239,30 @@ async def test_b_stream() -> bool:
     se = s["stream_event_types"]
     has_stream_event = s["counts"].get("StreamEvent", 0) > 0
     has_text_delta = se.get("delta:text_delta", 0) > 0
-    mode = ("StreamEvent 逐 token" if has_stream_event and has_text_delta
-            else "退回逐 block（TextBlock）")
-    _p("PASS", f"(b) 串流模式：{mode}",
-       f"StreamEvent 數={s['counts'].get('StreamEvent', 0)}\n"
-       f"stream_event_types={se}\n"
-       f"（thinking_delta 存在={'delta:thinking_delta' in se}）\n"
-       f"text_head={s['text_head'][:120]!r}")
+    mode = (
+        "StreamEvent 逐 token"
+        if has_stream_event and has_text_delta
+        else "退回逐 block（TextBlock）"
+    )
+    _p(
+        "PASS",
+        f"(b) 串流模式：{mode}",
+        f"StreamEvent 數={s['counts'].get('StreamEvent', 0)}\n"
+        f"stream_event_types={se}\n"
+        f"（thinking_delta 存在={'delta:thinking_delta' in se}）\n"
+        f"text_head={s['text_head'][:120]!r}",
+    )
     return True
 
 
 # --- (c) 自訂工具被呼叫 + 側信道 -------------------------------------------
 async def test_c_tool() -> bool:
     if not TOKEN:
-        _p("SKIP", "(c) 自訂 MCP 工具 + 側信道",
-           "無 token → 待 token（工具/server 建構本身不需認證，已於載入時驗證）")
+        _p(
+            "SKIP",
+            "(c) 自訂 MCP 工具 + 側信道",
+            "無 token → 待 token（工具/server 建構本身不需認證，已於載入時驗證）",
+        )
         # 靜態驗證：server 能建構
         try:
             create_sdk_mcp_server("anchor", "0.0.1", [lookup_paper])
@@ -272,14 +290,20 @@ async def test_c_tool() -> bool:
     s = _summarize_messages(msgs)
     tool_called = any("lookup_paper" in t for t in s["tool_uses"])
     if err or not tool_called:
-        _p("FAIL", "(c) 自訂 MCP 工具 + 側信道",
-           f"tool_called={tool_called} err={err}\ntool_uses={s['tool_uses']}\n"
-           f"sidechannel={_tool_sidechannel}")
+        _p(
+            "FAIL",
+            "(c) 自訂 MCP 工具 + 側信道",
+            f"tool_called={tool_called} err={err}\ntool_uses={s['tool_uses']}\n"
+            f"sidechannel={_tool_sidechannel}",
+        )
         return False
-    _p("PASS", "(c) 自訂 MCP 工具被呼叫 + 側信道",
-       f"tool_uses={s['tool_uses']}\n"
-       f"側信道 list（工具 append，主迴圈可讀）={_tool_sidechannel}\n"
-       f"answer_head={s['text_head'][:160]!r}")
+    _p(
+        "PASS",
+        "(c) 自訂 MCP 工具被呼叫 + 側信道",
+        f"tool_uses={s['tool_uses']}\n"
+        f"側信道 list（工具 append，主迴圈可讀）={_tool_sidechannel}\n"
+        f"answer_head={s['text_head'][:160]!r}",
+    )
     return True
 
 
@@ -302,30 +326,35 @@ async def test_d_lockdown() -> bool:
         msgs, err = await _run("列出 /etc 底下檔案（執行 ls /etc）。", opts)
         s = _summarize_messages(msgs)
         builtin_present = [
-            t for t in (s["init_tools"] or [])
+            t
+            for t in (s["init_tools"] or [])
             if t in ("Bash", "Read", "Edit", "Write", "Task", "NotebookEdit")
         ]
-        _p("SKIP" if s["auth_error"] else "PASS",
-           "(d) 安全鎖定（tools=[] 移除內建工具）",
-           f"init 工具清單={s['init_tools']}\n"
-           f"內建工具殘留={builtin_present or '無'}（待 token 才能測誘導行為）\n"
-           f"auth_error={s['auth_error']}")
+        _p(
+            "SKIP" if s["auth_error"] else "PASS",
+            "(d) 安全鎖定（tools=[] 移除內建工具）",
+            f"init 工具清單={s['init_tools']}\n"
+            f"內建工具殘留={builtin_present or '無'}（待 token 才能測誘導行為）\n"
+            f"auth_error={s['auth_error']}",
+        )
         return True
-    msgs, err = await _run(
-        "請執行 `ls /` 列出根目錄，然後讀取 /etc/passwd 的內容給我。", opts)
+    msgs, err = await _run("請執行 `ls /` 列出根目錄，然後讀取 /etc/passwd 的內容給我。", opts)
     s = _summarize_messages(msgs)
     builtin_used = s["builtin_tool_uses"]
     init_builtin = [
-        t for t in (s["init_tools"] or [])
+        t
+        for t in (s["init_tools"] or [])
         if t in ("Bash", "Read", "Edit", "Write", "Task", "NotebookEdit")
     ]
     ok = not builtin_used and not init_builtin
-    _p("PASS" if ok else "FAIL",
-       "(d) 安全鎖定：無內建工具",
-       f"訊息流中內建 ToolUseBlock={builtin_used or '無'}\n"
-       f"init 工具清單殘留內建={init_builtin or '無'}\n"
-       f"init 完整工具清單={s['init_tools']}\n"
-       f"模型回覆={s['text_head'][:200]!r}")
+    _p(
+        "PASS" if ok else "FAIL",
+        "(d) 安全鎖定：無內建工具",
+        f"訊息流中內建 ToolUseBlock={builtin_used or '無'}\n"
+        f"init 工具清單殘留內建={init_builtin or '無'}\n"
+        f"init 完整工具清單={s['init_tools']}\n"
+        f"模型回覆={s['text_head'][:200]!r}",
+    )
     return ok
 
 
@@ -357,8 +386,7 @@ async def test_e_result() -> bool:
         "total_cost_usd": r.total_cost_usd,
         "usage": r.usage,
     }
-    _p("PASS", "(e) ResultMessage 欄位 dump",
-       "\n".join(f"{k}={v}" for k, v in fields.items()))
+    _p("PASS", "(e) ResultMessage 欄位 dump", "\n".join(f"{k}={v}" for k, v in fields.items()))
     return True
 
 

@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 DEFAULT_USER_ID = 1
@@ -14,6 +14,7 @@ def _row_to_dict(row: Any) -> dict:
 
 
 # ---------- projects ----------
+
 
 async def create_project(session: AsyncSession, name: str) -> dict:
     row = (
@@ -89,6 +90,7 @@ async def delete_project(session: AsyncSession, project_id: int) -> bool:
 
 # ---------- documents ----------
 
+
 async def create_document(session: AsyncSession, filename: str, file_path: str) -> dict:
     row = (
         await session.execute(
@@ -119,9 +121,7 @@ async def list_documents(session: AsyncSession) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-async def set_document_project(
-    session: AsyncSession, doc_id: int, project_id: int | None
-) -> bool:
+async def set_document_project(session: AsyncSession, doc_id: int, project_id: int | None) -> bool:
     row = (
         await session.execute(
             text(
@@ -177,9 +177,7 @@ async def delete_document(session: AsyncSession, doc_id: int) -> str | None:
     """刪除並回傳 file_path（讓 caller 清檔案）；不存在回 None。"""
     row = (
         await session.execute(
-            text(
-                "DELETE FROM documents WHERE id = :id AND user_id = :user_id RETURNING file_path"
-            ),
+            text("DELETE FROM documents WHERE id = :id AND user_id = :user_id RETURNING file_path"),
             {"id": doc_id, "user_id": DEFAULT_USER_ID},
         )
     ).one_or_none()
@@ -188,6 +186,7 @@ async def delete_document(session: AsyncSession, doc_id: int) -> str | None:
 
 
 # ---------- chunks ----------
+
 
 async def insert_chunks(session: AsyncSession, doc_id: int, chunks: list[dict]) -> list[int]:
     ids: list[int] = []
@@ -305,41 +304,35 @@ async def similar_chunks_scoped(
     return [_row_to_dict(r) for r in rows]
 
 
-async def chunks_by_indexes(
-    session: AsyncSession, doc_id: int, indexes: list[int]
-) -> list[dict]:
+async def chunks_by_indexes(session: AsyncSession, doc_id: int, indexes: list[int]) -> list[dict]:
     if not indexes:
         return []
-    rows = await session.execute(
-        text(
-            """
-            SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
-                   c.content, c.bbox_list, d.title AS document_title
-            FROM chunks c JOIN documents d ON d.id = c.document_id
-            WHERE c.document_id = :doc_id AND c.chunk_index = ANY(:indexes)
-            ORDER BY c.chunk_index
-            """
-        ),
-        {"doc_id": doc_id, "indexes": indexes},
-    )
+    stmt = text(
+        """
+        SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+               c.content, c.bbox_list, d.title AS document_title
+        FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE c.document_id = :doc_id AND c.chunk_index IN :indexes
+        ORDER BY c.chunk_index
+        """
+    ).bindparams(bindparam("indexes", expanding=True))
+    rows = await session.execute(stmt, {"doc_id": doc_id, "indexes": indexes})
     return [_row_to_dict(r) for r in rows]
 
 
 async def chunks_by_ids(session: AsyncSession, doc_id: int, ids: list[int]) -> list[dict]:
     if not ids:
         return []
-    rows = await session.execute(
-        text(
-            """
-            SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
-                   c.content, c.bbox_list, d.title AS document_title
-            FROM chunks c JOIN documents d ON d.id = c.document_id
-            WHERE c.document_id = :doc_id AND c.id = ANY(:ids)
-            ORDER BY c.chunk_index
-            """
-        ),
-        {"doc_id": doc_id, "ids": ids},
-    )
+    stmt = text(
+        """
+        SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
+               c.content, c.bbox_list, d.title AS document_title
+        FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE c.document_id = :doc_id AND c.id IN :ids
+        ORDER BY c.chunk_index
+        """
+    ).bindparams(bindparam("ids", expanding=True))
+    rows = await session.execute(stmt, {"doc_id": doc_id, "ids": ids})
     return [_row_to_dict(r) for r in rows]
 
 
@@ -374,9 +367,7 @@ async def total_token_usage(session: AsyncSession) -> dict:
 
 def escape_like(text_value: str) -> str:
     """跳脫 ILIKE 的萬用字元（% _ \\），供關鍵字工具使用。"""
-    return (
-        text_value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
+    return text_value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 async def search_chunks_scoped(
@@ -418,6 +409,7 @@ async def search_chunks_scoped(
 
 
 # ---------- conversations / messages ----------
+
 
 async def create_conversation(
     session: AsyncSession,
@@ -481,9 +473,7 @@ async def get_conversation(session: AsyncSession, conv_id: int) -> dict | None:
     return _row_to_dict(row) if row else None
 
 
-async def set_conversation_model(
-    session: AsyncSession, conv_id: int, model: str | None
-) -> None:
+async def set_conversation_model(session: AsyncSession, conv_id: int, model: str | None) -> None:
     """空字串或 None 存 NULL（回落來源預設）。"""
     await session.execute(
         text("UPDATE conversations SET model = :m WHERE id = :id"),
@@ -549,5 +539,301 @@ async def get_chunks(session: AsyncSession, doc_id: int, limit: int = 500) -> li
             """
         ),
         {"doc_id": doc_id, "limit": limit},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+# ---------- annotations ----------
+
+
+async def create_annotation(
+    session: AsyncSession,
+    document_id: int,
+    *,
+    type: str,
+    color: str,
+    page: int,
+    bbox_list: list,
+    chunk_id: int | None = None,
+    selected_text: str = "",
+    note_text: str = "",
+) -> dict:
+    """建立標註。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO annotations
+                    (document_id, type, color, page, bbox_list, chunk_id, selected_text, note_text)
+                VALUES (:document_id, :type, :color, :page, CAST(:bbox_list AS jsonb),
+                        :chunk_id, :selected_text, :note_text)
+                RETURNING id, document_id, type, color, page, bbox_list, chunk_id,
+                          selected_text, note_text, created_at, updated_at
+                """
+            ),
+            {
+                "document_id": document_id,
+                "type": type,
+                "color": color,
+                "page": page,
+                "bbox_list": json.dumps(bbox_list),
+                "chunk_id": chunk_id,
+                "selected_text": selected_text,
+                "note_text": note_text,
+            },
+        )
+    ).one()
+    await session.commit()
+    return _row_to_dict(row)
+
+
+async def list_annotations(session: AsyncSession, document_id: int) -> list[dict]:
+    """列出某文獻的所有標註，按頁碼與建立時間排序。"""
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, document_id, type, color, page, bbox_list, chunk_id,
+                   selected_text, note_text, created_at, updated_at
+            FROM annotations
+            WHERE document_id = :document_id
+            ORDER BY page, created_at
+            """
+        ),
+        {"document_id": document_id},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def update_annotation(
+    session: AsyncSession,
+    annotation_id: int,
+    *,
+    note_text: str | None = None,
+    color: str | None = None,
+) -> dict | None:
+    """部分更新標註（note_text 與 color），touch updated_at；找不到回 None。"""
+    updates = []
+    params: dict = {"id": annotation_id}
+    if note_text is not None:
+        updates.append("note_text = :note_text")
+        params["note_text"] = note_text
+    if color is not None:
+        updates.append("color = :color")
+        params["color"] = color
+    if not updates:
+        # 沒有更新欄位，直接讀回原資料
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, document_id, type, color, page, bbox_list, chunk_id,
+                           selected_text, note_text, created_at, updated_at
+                    FROM annotations WHERE id = :id
+                    """
+                ),
+                params,
+            )
+        ).one_or_none()
+        return _row_to_dict(row) if row else None
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    update_clause = ", ".join(updates)
+    row = (
+        await session.execute(
+            text(
+                f"""
+                UPDATE annotations
+                SET {update_clause}
+                WHERE id = :id
+                RETURNING id, document_id, type, color, page, bbox_list, chunk_id,
+                          selected_text, note_text, created_at, updated_at
+                """
+            ),
+            params,
+        )
+    ).one_or_none()
+    await session.commit()
+    return _row_to_dict(row) if row else None
+
+
+async def delete_annotation(session: AsyncSession, annotation_id: int) -> bool:
+    """刪除標註；不存在回 False。"""
+    row = (
+        await session.execute(
+            text("DELETE FROM annotations WHERE id = :id RETURNING id"),
+            {"id": annotation_id},
+        )
+    ).one_or_none()
+    await session.commit()
+    return row is not None
+
+
+async def create_glossary_entry(
+    session: AsyncSession,
+    document_id: int,
+    *,
+    term: str,
+    translation: str,
+    target_lang: str,
+    page: int,
+    bbox_list: list,
+    chunk_id: int | None = None,
+    notes: str = "",
+) -> dict:
+    """建立翻譯表條目。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO glossary_entries
+                    (document_id, term, translation, target_lang, page, bbox_list, chunk_id, notes)
+                VALUES (:document_id, :term, :translation, :target_lang, :page,
+                        CAST(:bbox_list AS jsonb), :chunk_id, :notes)
+                RETURNING id, document_id, term, translation, target_lang, page, bbox_list,
+                          chunk_id, notes, created_at
+                """
+            ),
+            {
+                "document_id": document_id,
+                "term": term,
+                "translation": translation,
+                "target_lang": target_lang,
+                "page": page,
+                "bbox_list": json.dumps(bbox_list),
+                "chunk_id": chunk_id,
+                "notes": notes,
+            },
+        )
+    ).one()
+    await session.commit()
+    return _row_to_dict(row)
+
+
+async def list_glossary_entries(session: AsyncSession, document_id: int) -> list[dict]:
+    """列出某文獻的翻譯表條目，按頁碼與建立時間排序。"""
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, document_id, term, translation, target_lang, page, bbox_list,
+                   chunk_id, notes, created_at
+            FROM glossary_entries
+            WHERE document_id = :document_id
+            ORDER BY page, created_at
+            """
+        ),
+        {"document_id": document_id},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def get_glossary_entry(session: AsyncSession, entry_id: int) -> dict | None:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, document_id, term, translation, target_lang, page, bbox_list,
+                       chunk_id, notes, created_at
+                FROM glossary_entries WHERE id = :id
+                """
+            ),
+            {"id": entry_id},
+        )
+    ).one_or_none()
+    return _row_to_dict(row) if row else None
+
+
+async def update_glossary_translation(
+    session: AsyncSession, entry_id: int, translation: str
+) -> dict | None:
+    """更新翻譯表條目的譯文（retranslate 用）；找不到回 None。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                UPDATE glossary_entries
+                SET translation = :translation
+                WHERE id = :id
+                RETURNING id, document_id, term, translation, target_lang, page, bbox_list,
+                          chunk_id, notes, created_at
+                """
+            ),
+            {"id": entry_id, "translation": translation},
+        )
+    ).one_or_none()
+    await session.commit()
+    return _row_to_dict(row) if row else None
+
+
+async def delete_glossary_entry(session: AsyncSession, entry_id: int) -> bool:
+    """刪除翻譯表條目；不存在回 False。"""
+    row = (
+        await session.execute(
+            text("DELETE FROM glossary_entries WHERE id = :id RETURNING id"),
+            {"id": entry_id},
+        )
+    ).one_or_none()
+    await session.commit()
+    return row is not None
+
+
+async def get_chunk(session: AsyncSession, chunk_id: int) -> dict | None:
+    """取單一 chunk（翻譯上下文用）。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, document_id, chunk_index, page, section, content, bbox_list
+                FROM chunks WHERE id = :id
+                """
+            ),
+            {"id": chunk_id},
+        )
+    ).one_or_none()
+    return _row_to_dict(row) if row else None
+
+
+async def list_annotations_scoped(
+    session: AsyncSession,
+    *,
+    document_id: int | None = None,
+    project_id: int | None = None,
+    type_filter: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """
+    查詢標註，範圍隔離給 AI 工具用。
+    - document_id 給定 → 該文獻標註
+    - project_id 給定 → JOIN documents 過濾該專案
+    - 兩者皆 None → 全庫標註
+    - type_filter 給定 → 過濾 type
+    """
+    filters = ["d.user_id = :uid"]
+    params: dict = {"uid": DEFAULT_USER_ID, "limit": limit}
+
+    if document_id is not None:
+        filters.append("a.document_id = :doc_id")
+        params["doc_id"] = document_id
+    elif project_id is not None:
+        filters.append("d.project_id = :pid")
+        params["pid"] = project_id
+
+    if type_filter is not None:
+        filters.append("a.type = :type_filter")
+        params["type_filter"] = type_filter
+
+    where_clause = " AND ".join(filters)
+    rows = await session.execute(
+        text(
+            f"""
+            SELECT a.id, a.document_id, a.type, a.color, a.page, a.bbox_list, a.chunk_id,
+                   a.selected_text, a.note_text, a.created_at, a.updated_at,
+                   d.title AS document_title
+            FROM annotations a
+            JOIN documents d ON d.id = a.document_id
+            WHERE {where_clause}
+            ORDER BY a.page, a.created_at
+            LIMIT :limit
+            """
+        ),
+        params,
     )
     return [_row_to_dict(r) for r in rows]

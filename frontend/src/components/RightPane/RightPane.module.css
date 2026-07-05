@@ -1,0 +1,90 @@
+.pane {
+  flex: 1 1 42%;
+  min-width: 420px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--hairline);
+  min-height: 0;
+}
+
+/* ---- 分頁籤列 ---- */
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px 0;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.tab {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: 500 12.5px var(--sans);
+  padding: 7px 14px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  position: relative;
+  transition: color 0.13s ease, background-color 0.13s ease;
+}
+
+.tab:hover {
+  color: var(--text-strong);
+  background: var(--hover-row);
+}
+
+.tab[data-active="true"] {
+  color: var(--text-strong);
+  background: var(--bg-raised);
+}
+
+.tab[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.tab:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+.tabCount {
+  font: 500 10.5px var(--mono);
+  color: var(--text-faint);
+  margin-left: 4px;
+}
+
+.tab[data-active="true"] .tabCount {
+  color: var(--accent);
+}
+
+/* ---- 子面板常駐容器 ---- */
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.tabPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hidden {
+  display: none;
+}

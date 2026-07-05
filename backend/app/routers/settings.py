@@ -24,6 +24,8 @@ class SettingsUpdate(BaseModel):
     chat_backend: str | None = Field(default=None, pattern=r"^(openai|claude-sdk)$")
     # 進階退路：直接貼 `claude setup-token` 產出的長效 token
     claude_oauth_token: str | None = Field(default=None, max_length=2000)
+    # T-TR-01：翻譯表目標語言（任意字串直接進 prompt；空字串＝清除回落預設）
+    translation_target_lang: str | None = Field(default=None, max_length=60)
 
 
 def _view() -> dict:
