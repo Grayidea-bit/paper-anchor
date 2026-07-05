@@ -136,6 +136,15 @@
 - [x] [sonnet] T-AN-09 點擊標註操作選單（使用者需求：像 Word 直接在原文上操作，不必繞筆記面板）：collapsed click 對該頁標註 bbox 命中測試（÷scale 回 pt、2pt 容差、重疊取最晚建立），彈出〔4 色換色｜問 AI｜編輯備註｜刪除〕；標註層維持 pointer-events:none、選字流程零影響；「問 AI」走 requestSelectionAsk 帶原文+備註入對話。瀏覽器實測 8 項全過（換色即時、問 AI 帶文、備註保存、刪除同步、空白不彈、選字不變）。
 - [x] [sonnet] T-AN-10 標註互動改版（使用者試玩後拍板：桌面版「先畫再選」較順手）：移除底線/底色模式與工具列色盤（工具列只留縮放），圈選選單整合〔底線｜背景｜選色｜加註解〕lucide 圖示組＋原 AI 文字動作；ColorDots 共用元件（平常單顆當前色、點開展開 4 色、選色不關選單），annotMenu 同步圖示化；標註「問 AI」改只帶選取區原文。新依賴 lucide-react。瀏覽器實測 8 項全過。
 
+### M11 — 互動打磨 + 翻譯表 2026-07-05（使用者試玩回饋驅動）
+- [x] [sonnet] T-AN-11 對話串流中斷：streamMessage 支援 AbortSignal（abort 靜默返回）；串流中送出鈕變停止方塊；部分文字保留+「已中斷」標記、不觸發重試 UI；後端取消路徑確認不存半答案（零改動）。瀏覽器實測：中斷/續問/重整三情境全過。
+- [x] [sonnet] T-AN-12 圈選自動附掛提問 chip：圈選即掛 chip（chunkId 非同步補填不阻塞選單）、`SelectionAsk.auto` 旗標防搶焦點；選單移除「提問…」鈕。實測：chip 即時、焦點在 BODY、覆蓋語意/手動移除正常。
+- [x] [sonnet] T-TR-01 翻譯表後端：migration 006 glossary_entries（同 annotations 錨定語言）、CRUD+retranslate 端點、`translation_target_lang` 設定鍵（預設繁體中文）、prompts/translate_term.md、services/glossary.py 走既有 llm.chat()（鐵律 3/4）；LLM 失敗降級存空譯文不 500。真 NIM 實測翻譯/換語言/重翻全過；順修 conftest async_client 的 SessionLocal patch 從未生效 bug。
+- [x] [haiku] T-TR-02 前端資料層：client GlossaryEntry+4 函式、glossaryStore（creating 旗標）、SettingsModal「翻譯目標語言」segmented（繁中/English/日本語）、i18n 8 鍵。
+- [x] [sonnet] T-TR-03 翻譯表 UI：SelMenu「加入翻譯表」（lucide Languages，>200 字 disabled）、右欄第三分頁〔對話|筆記|翻譯表(M)〕keep-mounted、GlossaryPane（術語|譯文兩欄、失敗重試、點列跳回原文、刪除、空狀態）。真 NIM 全流程瀏覽器實測通過。
+- **DoD**：✅ pytest **126 passed**、ruff/format 全綠、npm run build 過；migration 006 套用 dev DB。
+- 發現事項：settings 快取疑似要重啟 api 才讀到新 `translation_target_lang`（T-TR-01/03 都觀察到；已開 background task 卡追蹤，待查 settings_store 快取失效機制）。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown
