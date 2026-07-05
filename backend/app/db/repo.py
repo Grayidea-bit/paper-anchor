@@ -667,6 +667,128 @@ async def delete_annotation(session: AsyncSession, annotation_id: int) -> bool:
     return row is not None
 
 
+async def create_glossary_entry(
+    session: AsyncSession,
+    document_id: int,
+    *,
+    term: str,
+    translation: str,
+    target_lang: str,
+    page: int,
+    bbox_list: list,
+    chunk_id: int | None = None,
+) -> dict:
+    """建立翻譯表條目。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO glossary_entries
+                    (document_id, term, translation, target_lang, page, bbox_list, chunk_id)
+                VALUES (:document_id, :term, :translation, :target_lang, :page,
+                        CAST(:bbox_list AS jsonb), :chunk_id)
+                RETURNING id, document_id, term, translation, target_lang, page, bbox_list,
+                          chunk_id, created_at
+                """
+            ),
+            {
+                "document_id": document_id,
+                "term": term,
+                "translation": translation,
+                "target_lang": target_lang,
+                "page": page,
+                "bbox_list": json.dumps(bbox_list),
+                "chunk_id": chunk_id,
+            },
+        )
+    ).one()
+    await session.commit()
+    return _row_to_dict(row)
+
+
+async def list_glossary_entries(session: AsyncSession, document_id: int) -> list[dict]:
+    """列出某文獻的翻譯表條目，按頁碼與建立時間排序。"""
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, document_id, term, translation, target_lang, page, bbox_list,
+                   chunk_id, created_at
+            FROM glossary_entries
+            WHERE document_id = :document_id
+            ORDER BY page, created_at
+            """
+        ),
+        {"document_id": document_id},
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def get_glossary_entry(session: AsyncSession, entry_id: int) -> dict | None:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, document_id, term, translation, target_lang, page, bbox_list,
+                       chunk_id, created_at
+                FROM glossary_entries WHERE id = :id
+                """
+            ),
+            {"id": entry_id},
+        )
+    ).one_or_none()
+    return _row_to_dict(row) if row else None
+
+
+async def update_glossary_translation(
+    session: AsyncSession, entry_id: int, translation: str
+) -> dict | None:
+    """更新翻譯表條目的譯文（retranslate 用）；找不到回 None。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                UPDATE glossary_entries
+                SET translation = :translation
+                WHERE id = :id
+                RETURNING id, document_id, term, translation, target_lang, page, bbox_list,
+                          chunk_id, created_at
+                """
+            ),
+            {"id": entry_id, "translation": translation},
+        )
+    ).one_or_none()
+    await session.commit()
+    return _row_to_dict(row) if row else None
+
+
+async def delete_glossary_entry(session: AsyncSession, entry_id: int) -> bool:
+    """刪除翻譯表條目；不存在回 False。"""
+    row = (
+        await session.execute(
+            text("DELETE FROM glossary_entries WHERE id = :id RETURNING id"),
+            {"id": entry_id},
+        )
+    ).one_or_none()
+    await session.commit()
+    return row is not None
+
+
+async def get_chunk(session: AsyncSession, chunk_id: int) -> dict | None:
+    """取單一 chunk（翻譯上下文用）。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, document_id, chunk_index, page, section, content, bbox_list
+                FROM chunks WHERE id = :id
+                """
+            ),
+            {"id": chunk_id},
+        )
+    ).one_or_none()
+    return _row_to_dict(row) if row else None
+
+
 async def list_annotations_scoped(
     session: AsyncSession,
     *,

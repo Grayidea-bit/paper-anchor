@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncGenerator
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -119,6 +120,24 @@ async def test_db() -> AsyncGenerator[tuple[AsyncSession, create_async_engine], 
                 """
             )
         )
+        # 建立 glossary_entries 表
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE glossary_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    term TEXT NOT NULL,
+                    translation TEXT NOT NULL DEFAULT '',
+                    target_lang TEXT NOT NULL,
+                    page INTEGER NOT NULL,
+                    bbox_list JSON NOT NULL DEFAULT '[]',
+                    chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
         # 插入預設使用者
         await conn.execute(text("INSERT INTO users (email) VALUES ('default@local')"))
         # 插入測試文獻
@@ -147,6 +166,23 @@ async def test_db() -> AsyncGenerator[tuple[AsyncSession, create_async_engine], 
     await engine.dispose()
 
 
+# 各模組以 `from app.db.session import SessionLocal` 匯入，綁定各自模組層級名稱；
+# 只 patch `app.db.session.SessionLocal` 不會反映到已匯入的名稱，需逐一 patch。
+_SESSION_LOCAL_MODULES = [
+    "app.db.session",
+    "app.settings_store",
+    "app.routers.annotations",
+    "app.routers.conversations",
+    "app.routers.documents",
+    "app.routers.glossary",
+    "app.routers.projects",
+    "app.services.digest",
+    "app.services.ingest",
+    "app.tools.keyword_search",
+    "app.tools.list_annotations",
+]
+
+
 @pytest.fixture(scope="function")
 async def async_client(
     test_db: tuple[async_sessionmaker, create_async_engine],
@@ -154,8 +190,10 @@ async def async_client(
     """提供測試用的 HTTP 客戶端，使用測試 DB。"""
     session_maker, _ = test_db
 
-    # 覆蓋 SessionLocal 以使用測試 DB
-    with patch("app.db.session.SessionLocal", session_maker):
+    # 覆蓋 SessionLocal 以使用測試 DB（見上方模組清單註解）
+    with ExitStack() as stack:
+        for module_path in _SESSION_LOCAL_MODULES:
+            stack.enter_context(patch(f"{module_path}.SessionLocal", session_maker))
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
