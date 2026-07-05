@@ -8,6 +8,8 @@ import {
   documentFileUrl,
   getChunks,
   type Annotation,
+  type AnnotationColor,
+  type BBox,
   type Chunk,
 } from "../../api/client";
 import {
@@ -18,6 +20,7 @@ import {
 import { useAnnotationStore } from "../../stores/annotationStore";
 import { Library } from "../Library/Library";
 import { useT } from "../../i18n";
+import { rangeToBBoxList } from "./selectionBBox";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -29,12 +32,34 @@ const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
 /** 穩定的空陣列參照：無標註的頁面共用同一個，避免每次 render 產生新 [] */
 const EMPTY_ANNOTATIONS: Annotation[] = [];
+/** 標註工具模式：cursor=維持既有選取選單；underline/highlight=直接建立標註 */
+type AnnotMode = "cursor" | "underline" | "highlight";
+const ANNOT_COLORS: AnnotationColor[] = ["amber", "terracotta", "sage", "slate"];
+const DEFAULT_ANNOT_COLOR: AnnotationColor = "amber";
+
+function loadAnnotColor(): AnnotationColor {
+  const saved = localStorage.getItem("annot_color");
+  return (ANNOT_COLORS as string[]).includes(saved ?? "")
+    ? (saved as AnnotationColor)
+    : DEFAULT_ANNOT_COLOR;
+}
 
 interface SelMenu {
   x: number;
   y: number;
   text: string;
   page: number | null;
+  /** 選取當下（消失前）捕捉的 bbox；undefined 表尚未支援，null 表換算失敗 */
+  bboxList: BBox[] | null;
+}
+
+/** 「加註解」popover 狀態：沿用 menu 的定位與捕捉結果 */
+interface NotePopover {
+  x: number;
+  y: number;
+  text: string;
+  page: number | null;
+  bboxList: BBox[] | null;
 }
 
 export function PDFPane() {
@@ -45,10 +70,29 @@ export function PDFPane() {
   const consumePendingJump = useReaderStore((s) => s.consumePendingJump);
   const annotations = useAnnotationStore((s) => s.annotations);
   const loadAnnotations = useAnnotationStore((s) => s.load);
+  const createAnnotation = useAnnotationStore((s) => s.create);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<SelMenu | null>(null);
+  const [notePopover, setNotePopover] = useState<NotePopover | null>(null);
+  const [noteText, setNoteText] = useState("");
   const chunksRef = useRef<Chunk[] | null>(null);
+
+  // 工具列模式：cursor（預設，不持久化）/ underline / highlight
+  const [mode, setMode] = useState<AnnotMode>("cursor");
+  // 標註顏色：持久化於 localStorage
+  const [annotColor, setAnnotColor] = useState<AnnotationColor>(() => loadAnnotColor());
+  const changeAnnotColor = useCallback((color: AnnotationColor) => {
+    setAnnotColor(color);
+    localStorage.setItem("annot_color", color);
+  }, []);
+
+  // 文獻切換/關閉：模式重置回 cursor
+  useEffect(() => {
+    setMode("cursor");
+    setMenu(null);
+    setNotePopover(null);
+  }, [documentId]);
 
   useEffect(() => {
     if (documentId === null) {
@@ -135,14 +179,38 @@ export function PDFPane() {
         setMenu(null);
         return;
       }
+      const page = Number(holder.dataset.page) || null;
+      // 按鈕點擊後 selection 會消失：bbox 必須在此刻（selection 定案時）捕捉
+      const anchor = rangeToBBoxList(range);
+      const bboxList = anchor?.bboxList ?? null;
+
+      if (mode === "underline" || mode === "highlight") {
+        if (!bboxList) return; // 換算失敗：靜默放棄，不建立
+        void (async () => {
+          const chunkId = await resolveChunkId(text, page);
+          await createAnnotation({
+            type: mode,
+            color: annotColor,
+            page: anchor!.page,
+            bbox_list: bboxList,
+            chunk_id: chunkId,
+            selected_text: text.slice(0, 3000),
+          });
+          window.getSelection()?.removeAllRanges();
+        })();
+        return;
+      }
+
+      // cursor 模式：維持既有 SelMenu 行為
       setMenu({
         x: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 200),
         y: Math.max(rect.top - 44, 60),
         text,
-        page: Number(holder.dataset.page) || null,
+        page,
+        bboxList,
       });
     });
-  }, []);
+  }, [mode, annotColor, resolveChunkId, createAnnotation]);
 
   const onAction = useCallback(
     async (preset: SelectionPreset) => {
@@ -154,6 +222,37 @@ export function PDFPane() {
     },
     [menu, resolveChunkId, requestSelectionAsk],
   );
+
+  /** 選單「加註解」：原位切換為 popover，帶著已捕捉的 bbox/page */
+  const onOpenNote = useCallback(() => {
+    if (!menu) return;
+    setNotePopover({ x: menu.x, y: menu.y, text: menu.text, page: menu.page, bboxList: menu.bboxList });
+    setNoteText("");
+    setMenu(null);
+  }, [menu]);
+
+  const closeNotePopover = useCallback(() => {
+    setNotePopover(null);
+    setNoteText("");
+    window.getSelection()?.removeAllRanges();
+  }, []);
+
+  const onSaveNote = useCallback(async () => {
+    if (!notePopover) return;
+    const trimmed = noteText.trim();
+    if (!trimmed) return;
+    const chunkId = await resolveChunkId(notePopover.text, notePopover.page);
+    await createAnnotation({
+      type: "note",
+      color: annotColor,
+      page: notePopover.page ?? 1,
+      bbox_list: notePopover.bboxList ?? [],
+      chunk_id: chunkId,
+      selected_text: notePopover.text.slice(0, 3000),
+      note_text: trimmed,
+    });
+    closeNotePopover();
+  }, [notePopover, noteText, annotColor, resolveChunkId, createAnnotation, closeNotePopover]);
 
   // PDF 獨立縮放（只影響左欄；右欄對話零影響）
   const [zoom, setZoom] = useState(() => {
@@ -211,6 +310,7 @@ export function PDFPane() {
       <section
         className={styles.pane}
         aria-label="文獻閱讀器"
+        data-mode={mode}
         onMouseUp={onMouseUp}
         onScroll={onScroll}
         ref={(el) => {
@@ -245,6 +345,35 @@ export function PDFPane() {
             <button className={styles.selMenuAsk} onClick={() => void onAction("free")}>
               {t.selAsk}…
             </button>
+            <button onClick={onOpenNote}>{t.addNote}</button>
+            <span className={styles.selMenuArrow} />
+          </div>
+        )}
+        {notePopover && (
+          <div
+            className={styles.notePopover}
+            style={{ left: notePopover.x, top: notePopover.y }}
+            onMouseUp={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <textarea
+              className={styles.notePopoverTextarea}
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              placeholder={t.notePlaceholder}
+              autoFocus
+              rows={3}
+            />
+            <div className={styles.notePopoverActions}>
+              <button onClick={closeNotePopover}>{t.cancel}</button>
+              <button
+                className={styles.notePopoverSave}
+                onClick={() => void onSaveNote()}
+                disabled={!noteText.trim()}
+              >
+                {t.save}
+              </button>
+            </div>
             <span className={styles.selMenuArrow} />
           </div>
         )}
@@ -255,7 +384,49 @@ export function PDFPane() {
         </span>
       )}
       {pdf && (
-        <span className={styles.zoomBar}>
+        <span className={styles.toolBar}>
+          <button
+            className={styles.modeBtn}
+            aria-pressed={mode === "cursor"}
+            data-active={mode === "cursor" || undefined}
+            title={t.cursor}
+            onClick={() => setMode("cursor")}
+          >
+            {t.cursor}
+          </button>
+          <button
+            className={styles.modeBtn}
+            aria-pressed={mode === "underline"}
+            data-active={mode === "underline" || undefined}
+            title={t.underline}
+            onClick={() => setMode("underline")}
+          >
+            {t.underline}
+          </button>
+          <button
+            className={styles.modeBtn}
+            aria-pressed={mode === "highlight"}
+            data-active={mode === "highlight" || undefined}
+            title={t.highlightMode}
+            onClick={() => setMode("highlight")}
+          >
+            {t.highlightMode}
+          </button>
+          <span className={styles.toolBarDivider} />
+          <span className={styles.colorSwatches}>
+            {ANNOT_COLORS.map((c) => (
+              <button
+                key={c}
+                className={styles.colorSwatch}
+                data-active={c === annotColor || undefined}
+                style={{ background: `var(--annot-${c})` }}
+                aria-label={c}
+                aria-pressed={c === annotColor}
+                onClick={() => changeAnnotColor(c)}
+              />
+            ))}
+          </span>
+          <span className={styles.toolBarDivider} />
           <button onClick={() => changeZoom(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}>
             −
           </button>

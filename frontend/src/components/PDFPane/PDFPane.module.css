@@ -71,22 +71,23 @@
   z-index: 5;
 }
 
-/* ---- 縮放控制 ---- */
+/* ---- 工具列（模式切換 + 色盤 + 縮放） ---- */
 
-.zoomBar {
+.toolBar {
   position: absolute;
   top: 14px;
   right: 34px;
   display: flex;
   align-items: center;
+  gap: 2px;
   background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
   border: 1px solid var(--hairline-strong);
   border-radius: 20px;
-  overflow: hidden;
+  padding: 0 2px;
   z-index: 5;
 }
 
-.zoomBar button {
+.toolBar button {
   border: none;
   background: none;
   color: var(--text-muted);
@@ -96,11 +97,11 @@
   transition: color 0.12s ease;
 }
 
-.zoomBar button:hover:not(:disabled) {
+.toolBar button:hover:not(:disabled) {
   color: var(--text-strong);
 }
 
-.zoomBar button:disabled {
+.toolBar button:disabled {
   color: var(--text-faint);
   cursor: default;
 }
@@ -108,6 +109,49 @@
 .zoomValue {
   font-size: 11px !important;
   min-width: 46px;
+}
+
+.toolBarDivider {
+  width: 1px;
+  align-self: stretch;
+  margin: 8px 2px;
+  background: var(--hairline-strong);
+}
+
+.modeBtn {
+  font: 500 12px var(--sans) !important;
+  border-radius: 14px;
+}
+
+.modeBtn[data-active] {
+  color: var(--text-strong);
+  background: var(--hover-row);
+}
+
+.colorSwatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.colorSwatch {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  padding: 0 !important;
+  border: 1.5px solid transparent !important;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.colorSwatch:hover {
+  transform: scale(1.12);
+}
+
+.colorSwatch[data-active] {
+  border-color: var(--text-strong) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-panel) 80%, transparent);
 }
 
 /* ---- 迷你捲動指示（琥珀段 = 高亮位置） ---- */
@@ -220,6 +264,12 @@
   cursor: text;
 }
 
+/* 底線／底色模式：提示游標會建立標註，而非純文字選取 */
+.pane[data-mode="underline"] .textLayer :global(span),
+.pane[data-mode="highlight"] .textLayer :global(span) {
+  cursor: crosshair;
+}
+
 .textLayer ::selection {
   background: var(--highlight-selection);
 }
@@ -281,6 +331,65 @@
   border-right: 1px solid var(--hairline-strong);
   border-bottom: 1px solid var(--hairline-strong);
   transform: translateX(-50%) rotate(45deg);
+}
+
+/* ---- 加註解 popover（原位取代 selMenu） ---- */
+
+.notePopover {
+  position: fixed;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 220px;
+  background: var(--bg-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: var(--shadow-float);
+  z-index: 40;
+  animation: menuIn 0.12s ease;
+}
+
+.notePopoverTextarea {
+  resize: vertical;
+  min-height: 56px;
+  font: 400 13px var(--sans);
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 5px;
+  padding: 6px 8px;
+}
+
+.notePopoverActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.notePopoverActions button {
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: 500 12px var(--sans);
+  padding: 5px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.notePopoverActions button:hover {
+  background: var(--hover-row);
+}
+
+.notePopoverSave {
+  color: var(--highlight) !important;
+}
+
+.notePopoverSave:disabled {
+  color: var(--text-faint) !important;
+  cursor: default;
 }
 
 .loading,
