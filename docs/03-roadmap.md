@@ -134,6 +134,7 @@
 - **試玩回饋追加（2026-07-05）**：
 - [x] [sonnet] T-AN-08 repo SQL 可移植化：`chunks_by_ids`/`chunks_by_indexes` 的 `ANY()` → `IN` + `bindparam(expanding=True)`（引用鏈上兩函式原零測試覆蓋）；新增 tests/test_repo.py（10 測試，真 SQLite DB）；拆 test_list_annotations 的 12 處 test double 改跑真 SQL；requirements 補 aiosqlite（conftest 既有隱性依賴）。驗證：pytest **109 passed**、真 Postgres 容器內 parity 實測（含 -1/未知 index 靜默跳過）。
 - [x] [sonnet] T-AN-09 點擊標註操作選單（使用者需求：像 Word 直接在原文上操作，不必繞筆記面板）：collapsed click 對該頁標註 bbox 命中測試（÷scale 回 pt、2pt 容差、重疊取最晚建立），彈出〔4 色換色｜問 AI｜編輯備註｜刪除〕；標註層維持 pointer-events:none、選字流程零影響；「問 AI」走 requestSelectionAsk 帶原文+備註入對話。瀏覽器實測 8 項全過（換色即時、問 AI 帶文、備註保存、刪除同步、空白不彈、選字不變）。
+- [x] [sonnet] T-AN-10 標註互動改版（使用者試玩後拍板：桌面版「先畫再選」較順手）：移除底線/底色模式與工具列色盤（工具列只留縮放），圈選選單整合〔底線｜背景｜選色｜加註解〕lucide 圖示組＋原 AI 文字動作；ColorDots 共用元件（平常單顆當前色、點開展開 4 色、選色不關選單），annotMenu 同步圖示化；標註「問 AI」改只帶選取區原文。新依賴 lucide-react。瀏覽器實測 8 項全過。
 
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
