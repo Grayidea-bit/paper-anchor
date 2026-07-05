@@ -308,10 +308,6 @@
   background: none !important;
 }
 
-.selMenuAsk {
-  color: var(--highlight) !important;
-}
-
 /* 圖示鈕（底線／背景／加註解／問AI／編輯備註／刪除）：正方形、置中圖示 */
 .selMenuIconBtn {
   display: flex;

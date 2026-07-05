@@ -274,9 +274,19 @@ export function PDFPane() {
           page,
           bboxList,
         });
+
+        // 選取當下自動附掛到右欄輸入框（不等選單操作）：先掛 text，chunkId 解析完再補上，
+        // 不 block 選單彈出；auto:true 讓 ChatPane 略過 focus，避免搶走使用者在 PDF 側的操作焦點。
+        const snippet = text.slice(0, 3000);
+        requestSelectionAsk({ text: snippet, chunkId: null, preset: "free", auto: true });
+        void resolveChunkId(text, page).then((chunkId) => {
+          if (chunkId !== null) {
+            requestSelectionAsk({ text: snippet, chunkId, preset: "free", auto: true });
+          }
+        });
       });
     },
-    [annotationsByPage],
+    [annotationsByPage, requestSelectionAsk, resolveChunkId],
   );
 
   const onAction = useCallback(
@@ -508,9 +518,6 @@ export function PDFPane() {
             <button onClick={() => void onAction("explain")}>{t.selExplain}</button>
             <button onClick={() => void onAction("translate")}>{t.selTranslate}</button>
             <button onClick={() => void onAction("critique")}>{t.selCritique}</button>
-            <button className={styles.selMenuAsk} onClick={() => void onAction("free")}>
-              {t.selAsk}…
-            </button>
             <span className={styles.selMenuArrow} />
           </div>
         )}

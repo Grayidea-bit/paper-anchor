@@ -13,6 +13,8 @@ export interface SelectionAsk {
   text: string;
   chunkId: number | null;
   preset: SelectionPreset;
+  /** 圈選當下自動附掛（非使用者點擊選單「問 AI」）：消費端不得搶走輸入框焦點 */
+  auto?: boolean;
 }
 
 /** 對話範圍（與 viewer 顯示哪篇文獻解耦，跨文獻引用跳轉時對話不中斷） */

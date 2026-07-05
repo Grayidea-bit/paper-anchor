@@ -279,7 +279,8 @@ function Chat({ context }: { context: ChatContext }) {
     const sel = { text: req.text, chunkId: req.chunkId };
     if (req.preset === "free") {
       setAttached(sel);
-      inputRef.current?.focus();
+      // 圈選自動附掛：不搶焦點（使用者可能還在 PDF 側繼續圈選/標註）
+      if (!req.auto) inputRef.current?.focus();
       return;
     }
     const question = {
