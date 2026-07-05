@@ -83,6 +83,33 @@ export interface Chunk {
   bbox_list: [number, number, number, number][];
 }
 
+export type AnnotationType = "underline" | "highlight" | "note";
+export type AnnotationColor = "amber" | "terracotta" | "sage" | "slate";
+
+export interface Annotation {
+  id: number;
+  document_id: number;
+  type: AnnotationType;
+  color: AnnotationColor;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+  selected_text: string;
+  note_text: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnotationCreate {
+  type: AnnotationType;
+  color: AnnotationColor;
+  page: number;
+  bbox_list: BBox[];
+  chunk_id: number | null;
+  selected_text: string;
+  note_text?: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, init);
   if (!resp.ok) {
@@ -375,4 +402,36 @@ export async function streamMessage(
     }
   }
   if (!ended) handlers.onError("連線中斷");
+}
+
+// ---- annotations ----
+
+export function listAnnotations(documentId: number): Promise<Annotation[]> {
+  return request<Annotation[]>(`/api/documents/${documentId}/annotations`);
+}
+
+export function createAnnotation(
+  documentId: number,
+  input: AnnotationCreate,
+): Promise<Annotation> {
+  return request<Annotation>(`/api/documents/${documentId}/annotations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateAnnotation(
+  id: number,
+  patch: { note_text?: string; color?: AnnotationColor },
+): Promise<Annotation> {
+  return request<Annotation>(`/api/annotations/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteAnnotation(id: number): Promise<void> {
+  return request<void>(`/api/annotations/${id}`, { method: "DELETE" });
 }
