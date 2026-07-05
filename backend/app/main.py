@@ -10,6 +10,7 @@ from app.db.session import SessionLocal
 from app.errors import AppError
 from app.llm import _chat_config, current_rpm
 from app.routers import (
+    annotations,
     conversations,
     documents,
     projects,
@@ -33,6 +34,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Paper Anchor", version="0.1.0", lifespan=lifespan)
 app.include_router(documents.router)
+app.include_router(annotations.router)
 app.include_router(conversations.router)
 app.include_router(projects.router)
 app.include_router(settings_router.router)
