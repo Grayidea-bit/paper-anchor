@@ -100,15 +100,17 @@
   - `DELETE /api/annotations/{id}` → 204
 - **AI 工具化**（T-AN-06）：`repo.list_annotations_scoped(document_id=*, project_id=*, type_filter=*, limit=50)` 為工具提供 scope 隔離查詢；結果可含全文搜尋、統計等擴展。
 
-### D9 翻譯表（glossary）（T-TR-01）
+### D9 翻譯表（glossary）（T-TR-01 / T-TR-04）
 - **錨定設計同 annotations**：使用者於 PDF 圈選術語 →「加入翻譯表」，前端換算 bbox（PDF 座標系）連同頁碼、chunk_id 送後端；`glossary_entries` 表結構與 annotations 同源（`page`/`bbox_list`/`chunk_id`），不碰 chunks 引用鏈本身（鐵律 1）。
 - **目標語言設定**：`settings_store` 白名單鍵 `translation_target_lang`（非 secret），值為顯示用字串（如「繁體中文」「English」「日本語」）直接進 prompt；未設定時服務層回落預設 `"繁體中文"`。
-- **翻譯流程**：`services/glossary.py` 讀 target_lang 設定 → 若有 `chunk_id` 撈該 chunk 內容截前 800 字當上下文 → 套用 `app/prompts/translate_term.md` → 呼叫 `llm.chat()`（既有非串流 helper，鐵律 3；未新增 llm.py 函式）→ 譯文 `strip()` 後存庫。
-- **失敗降級**：LLM 呼叫失敗時條目仍建立（或 retranslate 時保留舊譯文），`translation` 存空字串，不擲例外、不讓請求 500；前端可用 retranslate 端點重試或換目標語言後重打。
+- **兩種建立路徑（T-TR-04）**：
+  1. **從對話萃取（主路徑）**：使用者圈選 → 對話「翻譯」動作產生詳細翻譯（含白話說明）→ 前端在該回答下方提供「加入翻譯表」，帶著那份詳細翻譯全文（`source_text`，max 8000 字）呼叫建立 API。`services/glossary.py` 套用 `app/prompts/glossary_extract.md`（帶術語、目標語言、`source_text`）→ 呼叫 `llm.chat()` → 解析固定格式「譯文：/註解：」兩行 → `translation` + `notes` 入庫。解析失敗（LLM 未照格式回覆）降級：整段 `strip()` 當 `translation`，`notes` 存空字串。
+  2. **直接圈選加入（fallback）**：不帶 `source_text` 時行為與 T-TR-01 相同——若有 `chunk_id` 撈該 chunk 內容截前 800 字當上下文 → 套用 `app/prompts/translate_term.md` → 呼叫 `llm.chat()`（既有非串流 helper，鐵律 3；未新增 llm.py 函式）→ 譯文 `strip()` 後存庫，`notes` 存空字串。
+- **失敗降級**：LLM 呼叫失敗時條目仍建立（或 retranslate 時保留舊譯文），`translation`/`notes` 存空字串，不擲例外、不讓請求 500；前端可用 retranslate 端點重試或換目標語言後重打（retranslate 僅重打 `translation`，`notes` 不動）。
 - **CRUD 端點**
   - `GET /api/documents/{id}/glossary` — 條目列表（按 page 與 created_at 排序）
-  - `POST /api/documents/{id}/glossary` — 建立條目 → 201（含首次翻譯結果）
-  - `POST /api/glossary/{entry_id}/retranslate` — 重打一次翻譯並更新
+  - `POST /api/documents/{id}/glossary` — 建立條目 → 201（含首次翻譯結果；body 可選 `source_text` 觸發從對話萃取路徑）
+  - `POST /api/glossary/{entry_id}/retranslate` — 重打一次翻譯並更新（僅更新 `translation`）
   - `DELETE /api/glossary/{entry_id}` → 204
 
 #### 後端分派（M8：Claude Agent SDK 後端）
@@ -143,7 +145,7 @@ chunks       (id, document_id, chunk_index, page, section,
 annotations  (id, document_id, type, color, page, bbox_list JSONB,
               chunk_id NULL, selected_text, note_text, created_at, updated_at)  -- T-AN-01
 glossary_entries (id, document_id, term, translation, target_lang, page,
-              bbox_list JSONB, chunk_id NULL, created_at)                     -- T-TR-01
+              bbox_list JSONB, chunk_id NULL, notes TEXT, created_at)         -- T-TR-01 / T-TR-04
 conversations(id, scope('document'|'project'|'library'),
               document_id NULL, project_id NULL,        -- 互斥 CHECK 對應 scope
               title, model NULL, created_at)            -- model 為 NULL 時回落
@@ -169,17 +171,18 @@ messages     (id, conversation_id, role, content TEXT,
 | created_at | TIMESTAMPTZ | 建立時間 |
 | updated_at | TIMESTAMPTZ | 最後修改時間（PATCH 時 touch） |
 
-### glossary_entries 表詳解（T-TR-01）
+### glossary_entries 表詳解（T-TR-01 / T-TR-04）
 | 欄位 | 型態 | 說明 |
 |---|---|---|
 | id | BIGINT PK | 自增 ID |
 | document_id | BIGINT FK | 所屬文獻（CASCADE） |
 | term | TEXT | 使用者圈選的原文術語 |
-| translation | TEXT | LLM 譯文；LLM 失敗時為空字串，可 retranslate 重試 |
+| translation | TEXT | LLM 譯文（術語層級）；LLM 失敗或解析失敗時為空字串，可 retranslate 重試 |
 | target_lang | TEXT | 建立當下的目標語言（顯示字串，如「繁體中文」），換設定不回溯改舊條目 |
 | page | INT | 所在頁碼（≥1） |
 | bbox_list | JSONB | `[[x0,y0,x1,y1], ...]`，PDF 座標系（points），最少一個 |
 | chunk_id | BIGINT FK | 可選；指向所在 chunk（SET NULL），供翻譯上下文與未來 AI 工具用 |
+| notes | TEXT | 一到兩句白話補充說明（T-TR-04）；僅當建立時帶 `source_text` 且 LLM 成功依格式回覆才有值，否則為空字串；`retranslate` 不會更動此欄 |
 | created_at | TIMESTAMPTZ | 建立時間 |
 
 索引：`chunks(document_id)`、`chunks USING ivfflat (embedding vector_cosine_ops)`、`messages(conversation_id)`、`annotations(document_id)`、`glossary_entries(document_id)`。
@@ -198,7 +201,7 @@ messages     (id, conversation_id, role, content TEXT,
 | PATCH | /api/annotations/{id} | 更新標註 {note_text?, color?}（T-AN-01） |
 | DELETE | /api/annotations/{id} | 刪除標註 → 204（T-AN-01） |
 | GET | /api/documents/{id}/glossary | 文獻翻譯表列表（T-TR-01） |
-| POST | /api/documents/{id}/glossary | 建立翻譯表條目 → 201，含首次翻譯（T-TR-01） |
+| POST | /api/documents/{id}/glossary | 建立翻譯表條目 → 201，含首次翻譯；body 可選 `source_text`（對話詳細翻譯全文，觸發萃取譯文+註解）（T-TR-01 / T-TR-04） |
 | POST | /api/glossary/{entry_id}/retranslate | 重打一次翻譯並更新（T-TR-01） |
 | DELETE | /api/glossary/{entry_id} | 刪除翻譯表條目 → 204（T-TR-01） |
 | GET | /api/documents/{id}/conversations | 對話串列表（document scope） |

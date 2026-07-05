@@ -133,6 +133,7 @@ async def test_db() -> AsyncGenerator[tuple[AsyncSession, create_async_engine], 
                     page INTEGER NOT NULL,
                     bbox_list JSON NOT NULL DEFAULT '[]',
                     chunk_id INTEGER REFERENCES chunks(id) ON DELETE SET NULL,
+                    notes TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """

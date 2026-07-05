@@ -1,4 +1,4 @@
-"""翻譯表（glossary）測試（T-TR-01）：LLM 呼叫一律 mock。"""
+"""翻譯表（glossary）測試（T-TR-01 / T-TR-04）：LLM 呼叫一律 mock。"""
 
 from unittest.mock import patch
 
@@ -39,7 +39,107 @@ async def test_create_entry_success(test_db, setup_test_document):
     assert entry["translation"] == "神經網路"
     assert entry["target_lang"] == "繁體中文"
     assert entry["chunk_id"] == chunk_id
+    assert entry["notes"] == ""
     assert "id" in entry
+
+
+@pytest.mark.asyncio
+async def test_create_entry_with_source_text_parses_translation_and_notes(
+    test_db, setup_test_document
+):
+    """帶 source_text：mock 回兩行固定格式 → translation/notes 正確入庫。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        with patch(
+            "app.services.glossary.chat",
+            return_value=("譯文：神經網路\n註解：一種模仿生物神經系統結構的機器學習模型。", {}),
+        ) as mock_chat:
+            entry = await glossary_service.create_entry(
+                session,
+                doc_id,
+                term="neural network",
+                page=1,
+                bbox_list=[[0, 0, 10, 10]],
+                chunk_id=chunk_id,
+                source_text="Neural network（神經網路）是一種...詳細翻譯全文...",
+            )
+    assert entry["translation"] == "神經網路"
+    assert entry["notes"] == "一種模仿生物神經系統結構的機器學習模型。"
+    assert mock_chat.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_entry_with_source_text_malformed_output_degrades(
+    test_db, setup_test_document
+):
+    """帶 source_text 但 mock 回覆不合「譯文：/註解：」格式 → 降級整段當譯文，notes 空。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        with patch(
+            "app.services.glossary.chat",
+            return_value=("這是一段沒有照格式回覆的自由文字說明", {}),
+        ):
+            entry = await glossary_service.create_entry(
+                session,
+                doc_id,
+                term="gradient",
+                page=1,
+                bbox_list=[[0, 0, 10, 10]],
+                chunk_id=chunk_id,
+                source_text="詳細翻譯全文...",
+            )
+    assert entry["translation"] == "這是一段沒有照格式回覆的自由文字說明"
+    assert entry["notes"] == ""
+
+
+@pytest.mark.asyncio
+async def test_create_entry_with_source_text_llm_failure_degrades_both_empty(
+    test_db, setup_test_document
+):
+    """帶 source_text 時 LLM 例外：條目仍建立，translation/notes 皆空。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        with patch(
+            "app.services.glossary.chat",
+            side_effect=RuntimeError("llm api down"),
+        ):
+            entry = await glossary_service.create_entry(
+                session,
+                doc_id,
+                term="backprop",
+                page=1,
+                bbox_list=[[0, 0, 10, 10]],
+                chunk_id=chunk_id,
+                source_text="詳細翻譯全文...",
+            )
+    assert entry["translation"] == ""
+    assert entry["notes"] == ""
+    assert "id" in entry
+
+
+@pytest.mark.asyncio
+async def test_create_entry_without_source_text_notes_empty(test_db, setup_test_document):
+    """不帶 source_text：行為與既有 fallback 路徑一致，notes 一律空字串。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        with patch(
+            "app.services.glossary.chat",
+            return_value=("神經網路", {}),
+        ):
+            entry = await glossary_service.create_entry(
+                session,
+                doc_id,
+                term="neural network",
+                page=1,
+                bbox_list=[[0, 0, 10, 10]],
+                chunk_id=chunk_id,
+            )
+    assert entry["translation"] == "神經網路"
+    assert entry["notes"] == ""
 
 
 @pytest.mark.asyncio
@@ -197,6 +297,33 @@ async def test_router_create_list_delete_roundtrip(async_client, setup_test_docu
 
 
 @pytest.mark.asyncio
+async def test_router_create_with_source_text_extracts_notes(async_client, setup_test_document):
+    """帶 source_text 建立條目：譯文＋註解一起入庫並可經 GET 讀回。"""
+    doc_id, chunk_id = setup_test_document
+    with patch(
+        "app.services.glossary.chat",
+        return_value=("譯文：梯度下降\n註解：一種透過反覆調整參數最小化損失函數的最佳化方法。", {}),
+    ):
+        resp = await async_client.post(
+            f"/api/documents/{doc_id}/glossary",
+            json={
+                "term": "gradient descent",
+                "page": 1,
+                "bbox_list": [[0, 0, 10, 10]],
+                "chunk_id": chunk_id,
+                "source_text": "Gradient descent 詳細翻譯：這是一種最佳化演算法...",
+            },
+        )
+    assert resp.status_code == 201
+    entry = resp.json()
+    assert entry["translation"] == "梯度下降"
+    assert entry["notes"] == "一種透過反覆調整參數最小化損失函數的最佳化方法。"
+
+    resp = await async_client.get(f"/api/documents/{doc_id}/glossary")
+    assert resp.json()[0]["notes"] == "一種透過反覆調整參數最小化損失函數的最佳化方法。"
+
+
+@pytest.mark.asyncio
 async def test_router_create_document_not_found(async_client):
     resp = await async_client.post(
         "/api/documents/999999/glossary",
@@ -270,6 +397,7 @@ async def test_repo_create_and_get_glossary_entry(test_db, setup_test_document):
         fetched = await repo.get_glossary_entry(session, entry["id"])
     assert fetched["term"] == "term"
     assert fetched["translation"] == "譯文"
+    assert fetched["notes"] == ""
 
 
 @pytest.mark.asyncio
@@ -278,3 +406,25 @@ async def test_repo_get_glossary_entry_not_found(test_db):
     async with session_maker() as session:
         result = await repo.get_glossary_entry(session, 999999)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_repo_create_and_get_glossary_entry_with_notes(test_db, setup_test_document):
+    """notes 欄位可正確寫入與讀回（T-TR-04）。"""
+    session_maker, _ = test_db
+    doc_id, chunk_id = setup_test_document
+    async with session_maker() as session:
+        entry = await repo.create_glossary_entry(
+            session,
+            doc_id,
+            term="term",
+            translation="譯文",
+            target_lang="繁體中文",
+            page=1,
+            bbox_list=[[0, 0, 10, 10]],
+            chunk_id=chunk_id,
+            notes="一句白話補充",
+        )
+        fetched = await repo.get_glossary_entry(session, entry["id"])
+    assert entry["notes"] == "一句白話補充"
+    assert fetched["notes"] == "一句白話補充"

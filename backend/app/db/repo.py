@@ -677,6 +677,7 @@ async def create_glossary_entry(
     page: int,
     bbox_list: list,
     chunk_id: int | None = None,
+    notes: str = "",
 ) -> dict:
     """建立翻譯表條目。"""
     row = (
@@ -684,11 +685,11 @@ async def create_glossary_entry(
             text(
                 """
                 INSERT INTO glossary_entries
-                    (document_id, term, translation, target_lang, page, bbox_list, chunk_id)
+                    (document_id, term, translation, target_lang, page, bbox_list, chunk_id, notes)
                 VALUES (:document_id, :term, :translation, :target_lang, :page,
-                        CAST(:bbox_list AS jsonb), :chunk_id)
+                        CAST(:bbox_list AS jsonb), :chunk_id, :notes)
                 RETURNING id, document_id, term, translation, target_lang, page, bbox_list,
-                          chunk_id, created_at
+                          chunk_id, notes, created_at
                 """
             ),
             {
@@ -699,6 +700,7 @@ async def create_glossary_entry(
                 "page": page,
                 "bbox_list": json.dumps(bbox_list),
                 "chunk_id": chunk_id,
+                "notes": notes,
             },
         )
     ).one()
@@ -712,7 +714,7 @@ async def list_glossary_entries(session: AsyncSession, document_id: int) -> list
         text(
             """
             SELECT id, document_id, term, translation, target_lang, page, bbox_list,
-                   chunk_id, created_at
+                   chunk_id, notes, created_at
             FROM glossary_entries
             WHERE document_id = :document_id
             ORDER BY page, created_at
@@ -729,7 +731,7 @@ async def get_glossary_entry(session: AsyncSession, entry_id: int) -> dict | Non
             text(
                 """
                 SELECT id, document_id, term, translation, target_lang, page, bbox_list,
-                       chunk_id, created_at
+                       chunk_id, notes, created_at
                 FROM glossary_entries WHERE id = :id
                 """
             ),
@@ -751,7 +753,7 @@ async def update_glossary_translation(
                 SET translation = :translation
                 WHERE id = :id
                 RETURNING id, document_id, term, translation, target_lang, page, bbox_list,
-                          chunk_id, created_at
+                          chunk_id, notes, created_at
                 """
             ),
             {"id": entry_id, "translation": translation},

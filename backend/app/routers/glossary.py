@@ -18,6 +18,7 @@ class GlossaryCreate(BaseModel):
     page: int = Field(ge=1)
     bbox_list: list[tuple[float, float, float, float]] = Field(min_length=1)
     chunk_id: int | None = None
+    source_text: str | None = Field(default=None, max_length=8000)
 
 
 @router.get("/documents/{document_id}/glossary")
@@ -33,7 +34,11 @@ async def list_glossary(document_id: int) -> list[dict]:
 
 @router.post("/documents/{document_id}/glossary", status_code=201)
 async def create_glossary_entry(document_id: int, body: GlossaryCreate) -> dict:
-    """建立翻譯表條目：呼叫 LLM 翻譯（失敗降級為空字串，條目仍建立）。"""
+    """建立翻譯表條目。
+
+    帶 `source_text`（對話「翻譯」動作的詳細翻譯全文）時萃取「簡潔譯文 + 白話註解」；
+    不帶時走原直接翻譯路徑（fallback，notes 為空）。LLM 失敗降級為空字串，條目仍建立。
+    """
     async with SessionLocal() as session:
         doc = await repo.get_document(session, document_id)
     if doc is None:
@@ -46,6 +51,7 @@ async def create_glossary_entry(document_id: int, body: GlossaryCreate) -> dict:
             page=body.page,
             bbox_list=body.bbox_list,
             chunk_id=body.chunk_id,
+            source_text=body.source_text,
         )
 
 
