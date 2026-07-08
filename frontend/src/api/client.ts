@@ -553,6 +553,8 @@ export interface BackupLastRun {
 export interface BackupStatus {
   connected: boolean;
   running: boolean;
+  /** M13 新增（見 D11）：後端未部署時可能缺席，前端一律容錯回退成 backup */
+  operation?: "backup" | "restore" | null;
   progress: BackupProgress | null;
   last_run: BackupLastRun | null;
   interval_hours: number;
