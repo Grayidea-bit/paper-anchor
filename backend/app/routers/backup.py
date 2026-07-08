@@ -1,0 +1,75 @@
+"""單向備份到 Google Drive 端點（M12 D10 / T-BK-03）。
+
+薄層：狀態/觸發/OAuth loopback 全部委派 services/backup.py 與 services/gdrive.py，
+本檔不含業務邏輯。錯誤走既有 AppError handler（見 app/main.py），callback 端點是
+瀏覽器導向的普通頁面（非 JSON API），成功/Google 端拒絕時各回一頁極簡 HTML。
+"""
+
+import html
+
+from fastapi import APIRouter, BackgroundTasks
+from fastapi.responses import HTMLResponse
+
+from app import settings_store
+from app.errors import AppError
+from app.services import backup
+from app.services.gdrive import build_auth_url, exchange_code
+
+router = APIRouter(prefix="/api/backup", tags=["backup"])
+
+_CONNECTED_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Google Drive 已連接</title></head>
+<body style="font-family: sans-serif; text-align: center; padding-top: 4rem;">
+<h2>已連接 Google Drive</h2>
+<p>可關閉此分頁。</p>
+</body></html>"""
+
+_FAILED_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>Google Drive 連接失敗</title></head>
+<body style="font-family: sans-serif; text-align: center; padding-top: 4rem;">
+<h2>連接失敗</h2>
+<p>{message}</p>
+</body></html>"""
+
+
+@router.get("/status")
+async def get_backup_status() -> dict:
+    return await backup.get_status()
+
+
+@router.post("/run", status_code=202)
+async def trigger_backup_run(background_tasks: BackgroundTasks) -> dict:
+    if not settings_store.runtime("gdrive_refresh_token"):
+        raise AppError("not_connected", "尚未連接 Google Drive", status=400)
+    if backup.is_running():
+        raise AppError("backup_running", "備份已在進行中", status=409)
+    background_tasks.add_task(backup.run_backup)
+    return {"started": True}
+
+
+@router.get("/auth/start")
+async def start_backup_auth() -> dict:
+    return {"auth_url": build_auth_url()}
+
+
+@router.get("/auth/callback")
+async def backup_auth_callback(
+    code: str | None = None, state: str | None = None, error: str | None = None
+) -> HTMLResponse:
+    """OAuth loopback 回呼；供瀏覽器導向，非 JSON API。
+
+    Google 端拒絕授權時帶 `error` 參數 → 顯示失敗頁；我方 state 驗證失敗
+    （`exchange_code` 拋 `GDriveAuthError`）走既有 AppError handler 回 JSON 400。
+    """
+    if error:
+        return HTMLResponse(_FAILED_HTML.format(message=html.escape(error)), status_code=400)
+
+    refresh_token = await exchange_code(code or "", state or "")
+    await settings_store.update({"gdrive_refresh_token": refresh_token})
+    return HTMLResponse(_CONNECTED_HTML)
+
+
+@router.post("/auth/disconnect", status_code=204)
+async def disconnect_backup_auth() -> None:
+    """中斷連接、清除 refresh token；不刪除遠端任何資料（D10 刪除語意）。"""
+    await settings_store.update({"gdrive_refresh_token": ""})

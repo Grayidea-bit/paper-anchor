@@ -11,6 +11,7 @@ from app.errors import AppError
 from app.llm import _chat_config, current_rpm
 from app.routers import (
     annotations,
+    backup,
     conversations,
     documents,
     glossary,
@@ -41,6 +42,7 @@ app.include_router(conversations.router)
 app.include_router(projects.router)
 app.include_router(settings_router.router)
 app.include_router(tools_router.router)
+app.include_router(backup.router)
 
 
 @app.exception_handler(AppError)
