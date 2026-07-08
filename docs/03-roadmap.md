@@ -166,6 +166,15 @@
   - 進度：code review 完成（無高嚴重度；6 項發現已修：D10 原子性措辭限縮、串流上傳重試測試、disconnect 清 access token 快取、_pending FIFO 逐出、callback 一律回 HTML、前端間隔輸入 clamp 8760）；pytest 220 passed / ruff / npm build 全綠；live 端點煙霧測試符合 §5。**待辦：真 Google 帳號 E2E 六步**（需部署者自己的 OAuth client，無法由開發端代跑）。
 - **DoD**：pytest + ruff + `npm run build` 全綠；真 Google 帳號 E2E 六步全過（見計畫檔驗收）；`eval_citations` 不退化；D10 規格與實作一致。
 
+### M13 — 雲端匯入還原 + 設定頁重構
+- **目標**：M12 單向備份實測後的回饋迭代。補上反向的**從 Google Drive 匯入還原**（restore）——把遠端 manifest 指向的一次完整備份**合併**回本機 DB（不刪本地、id 全部 remap、可比時間戳新者勝、無從比較本地優先），新文獻下載 PDF 後**逐篇同步重跑 ingest** 重建引用鏈（dump 有 digest 則跳過重生成）；缺 PDF 整篇跳過、單篇失敗續跑、重跑即修復（冪等收斂）。restore 與 backup 共用同一把鎖互斥、`settings.json` 一律不還原。同時**設定頁重構**為左側分類、右側內容的系統設定式版面（六分類 + dirty 圓點），並補強備份 UX（連接自動先存憑證、進度條 + 階段中文）。合併規則與冪等保證全文見 `docs/02-architecture.md` D11；設計全文見計畫檔。
+- [x] [opus] T-RS-00 **文件先行**（鐵律 5）：02-architecture §5 加 `POST /api/backup/restore` + status 擴充（operation／last_restore／restore progress phase）、新增 D11 節（合併規則逐表全文、citations 只 remap document_id、chunk_id 一律 NULL、新文獻流程、缺 PDF 跳過、失敗續跑＋重跑修復冪等、settings 不還原、format_version 檢查、共用鎖互斥、restore_last_run 與 summary 結構）、D10 settings 鍵表補 `restore_last_run`、本節 M13 各卡。合併規則是跨模組資料語意，寫錯全下游返工。依賴：—
+- [ ] [opus] T-RS-01 後端還原服務：`gdrive.download_file` + `repo` restore inserts（顯式時間戳）+ `ingest_document` 加 `run_digest` 參數 + `backup.py` 鎖 helper 抽取（`try_begin`/`set_progress`）+ `services/restore.py` 合併引擎與 `run_restore` 編排 + `routers/backup.py` 的 `POST /restore` 端點 + `restore_last_run` settings 鍵；`tests/test_restore.py` 十項（空庫全還原、重疊冪等、新舊比對、FK null、citations remap、ingest 觸發/失敗續跑、409 互斥、failed 修復、守護測試、download_file MockTransport）。資料寫入正確性風險最高，不下放。依賴：T-RS-00
+- [ ] [sonnet] T-UX-01 設定頁左右分欄重構：`SettingsModal` 拆殼（overlay/header/左 nav/右 panel/footer 全域儲存鈕）+ `sections/` 六子元件（Usage/Llm/Prompt/Backup/Appearance/Tools）+ nav dirty 圓點 + 固定尺寸（880×min(680,86vh)）；備份分頁 UX：連接鈕自動先 PUT 僅憑證兩鍵再開授權窗 + 進度條（current/total 填色 + 「{操作}·{階段} n/m」+ 階段 i18n）；npm build + 瀏覽器實測。依賴：T-RS-00（僅 phase 命名對齊；與 T-RS-01 完全並行）
+- [ ] [sonnet] T-RS-02 前端匯入 UI：`client.ts`（`BackupStatus` 加 operation/last_restore + `restoreBackup()`）+ `backupStore`（`runRestore`）+ BackupSection 匯入小節（「從雲端匯入」二次確認 dialog 三句 → POST restore → 同一條進度條 → 完成顯示摘要、`ingest_failed` 警告色列篇名、citation chip 對 `document_id: null` 降級不可跳）+ i18n 約 24 鍵。依賴：T-RS-00 + T-UX-01
+- [ ] [opus] T-RS-03 整合審查 + 驗證：pytest/ruff/`npm run build` 全綠 + **引用鏈回歸**（鐵律 1，動了 `ingest_document` 簽名，eval_citations 不退化）+ chrome computer-use 實測 UI（六分類切換不跳動、dirty 圓點、填憑證直接連接應先 PUT 再 auth/start、備份進度條、匯入確認框→三階段進度→摘要渲染）+ 真帳號還原 E2E（與使用者協作：現庫備份→清空/新 DB→匯入→文獻/標註/對話重現、chip 跳轉正常、digest 未重生成、第二次匯入摘要全 0 冪等、本地較新標註不被蓋）+ 本節其餘卡勾選。依賴：全部
+- **DoD**：pytest（既有不退化 + test_restore 全過）+ ruff + `npm run build` 全綠；`eval_citations` 不退化；真帳號還原 E2E 全過；D11 規格與實作一致。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

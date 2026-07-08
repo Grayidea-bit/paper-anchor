@@ -180,8 +180,42 @@ PaperAnchor Backup/
 | `gdrive_refresh_token` | OAuth refresh token（callback 取得後寫入） | **是**（SECRET_KEYS 遮罩） |
 | `backup_interval_hours` | 定時備份間隔小時數（0＝關閉） | 否 |
 | `backup_last_run` | 上次備份時間與結果摘要（服務層寫入，PUT 不開放） | 否 |
+| `restore_last_run` | 上次還原時間與結果摘要（服務層寫入，PUT 不開放；M13，見 D11） | 否 |
 
-> `gdrive_client_id`／`gdrive_client_secret`／`backup_interval_hours` 須同步加入 `routers/settings.py` 的 `SettingsUpdate`（漏加會 PUT 靜默丟棄，見 M11 發現事項）；`gdrive_refresh_token`／`backup_last_run` 不開放 PUT，列入守護測試 WRITE_EXEMPT。
+> `gdrive_client_id`／`gdrive_client_secret`／`backup_interval_hours` 須同步加入 `routers/settings.py` 的 `SettingsUpdate`（漏加會 PUT 靜默丟棄，見 M11 發現事項）；`gdrive_refresh_token`／`backup_last_run`／`restore_last_run` 不開放 PUT，列入守護測試 WRITE_EXEMPT。
+
+### D11 從 Google Drive 匯入還原（M13）
+
+M12 只做單向備份並預留 `format_version: 1`；M13 補上反向的**匯入還原**（restore）：把遠端 manifest 指向的一次完整備份合併回本機 DB，並對新文獻重跑 ingest（解析→切塊→嵌入）以重建引用鏈。**還原是合併，不是覆蓋整庫**——設計目標是「新機還原可完整重現、舊機重跑不破壞本地較新資料、任何中斷重跑都收斂」。
+
+#### 合併規則總原則
+不刪本地任何列；所有主鍵（id）在插入時重生並在關聯欄位 remap；可比較時間戳時新者勝、無從比較時本地優先；`settings.json` 一律不還原。每張表以**內容身分簽章**（非備份端 id）判斷「本地是否已存在對應列」：
+
+| 表 Table | 身分簽章 Identity | 已存在 If exists | 不存在 If absent |
+|---|---|---|---|
+| projects | `name` | remap id，不改欄位 | 插入（顯式 `created_at`） |
+| documents | PDF UUID 檔名（`filename`） | remap id，整篇跳過（不重嵌、不覆蓋） | 新文獻流程（下述） |
+| annotations | (document, type, page, bbox_list 簽章) | 比 `updated_at`：備份較新→覆蓋 `note_text`/`color`/`selected_text`；否則跳過 | 插入（顯式時間戳，`chunk_id=NULL`） |
+| glossary_entries | (document, term, target_lang, page) | 跳過（無 `updated_at` 可比） | 插入（`chunk_id=NULL`） |
+| conversations | (scope, remap 後目標, title, created_at) | 整串跳過（含 messages） | 整串匯入（保留 `model`） |
+| settings.json | — | **一律不還原**（機器組態非內容） | — |
+
+- **citations JSONB（messages）**：只 remap `document_id`（查無對應→`null`，chip 顯示但不可跳、不誤跳）；`label`/`chunk_id`/`chunk_index` 原樣保留（訊息內自洽）。跳轉只靠 `page`+`bbox_list`（見 D1），不受 id 重生影響。
+- **annotations／glossary 的 `chunk_id`（真 FK）**：插入時一律 `NULL`。備份端的舊 `chunk_id` 在本機必為 FK violation（chunks 由 ingest 重生、id 全新）；標註本身自帶 `page`+`bbox_list`，不依賴 `chunk_id` 定位。
+- **新文獻流程**：Drive 下載 PDF 到 `upload_dir` → `restore_insert_document`（寫入 dump 的 `digest`/`token_usage` 與顯式 `created_at`）→ **同步逐篇** `ingest_document(id, run_digest=(dump 無 digest))`。dump 已有 `digest` 就沿用、`run_digest=False` 跳過重生成（省下最貴的 LLM 呼叫；digest 內 citations 自洽於 `page`+`bbox_list`）；dump 無 digest 才 `run_digest=True` 重跑。逐篇序列執行（非平行），兼作進度 `ingest n/m` 並避免同時重嵌打爆 embedding API。
+- **缺 PDF 的文獻**：遠端 `pdfs/` 找不到對應檔的文獻，整篇連同其標註/翻譯表/對話一併跳過，記入 summary 的 `documents_skipped`（無 PDF 無法重建 chunks，勉強插入只會得到殘缺文獻）。
+- **單篇 ingest 失敗續跑 + 重跑即修復（冪等收斂保證）**：任一篇 ingest 失敗時標記該文獻 `status=failed`、繼續處理其餘篇、summary 記入 `ingest_failed:[title]`，不中止整輪。**重跑 restore 即修復**：既存文獻若匹配到 `failed` 狀態，先 `delete_chunks` 清殘塊再重嵌；正常文獻整篇跳過。因此無論中途伺服器重啟留下半還原、或個別篇因限流失敗，重跑都會朝「全庫齊備」收斂，整體操作冪等。
+- **format_version 檢查**：讀 manifest，`format_version != 1` → `400 unsupported_format`；`embed_model` 不比對（新文獻一律以本機當前 embedder 重嵌，故不需相容）。
+- **鎖互斥**：restore 與 backup **共用同一把服務層鎖**（`backup.py` 抽 `try_begin(operation)`／`set_progress` helper，`get_status()` 讀 `_operation`）。一把鎖天然互斥——備份進行中觸發還原回 `409 operation_running`，反之亦然；常駐排程（M12 scheduler）零改動即被同一把鎖擋下。
+- **持久化與 summary**：還原結束把結果寫入 `restore_last_run`（settings 鍵，服務層寫入、PUT 不開放）。summary 結構：
+
+  ```
+  {documents_new, documents_skipped, annotations_new, annotations_updated,
+   glossary_new, conversations_new, messages_new, ingest_failed: [title, ...]}
+  ```
+
+#### 模組落點
+新檔 `backend/app/services/restore.py`（合併引擎 + `run_restore` 編排）；`gdrive.py` 加 `download_file(file_id, dest_path)`（`GET files/{id}?alt=media` 串流落地，走既有 `_authed` 重試）；`repo.py` 加 restore 專用 insert 函式（支援顯式 `created_at`/`updated_at`）與 `restore_overwrite_annotation`／`delete_chunks`（查詢面複用既有 `list_*`）；`ingest.py` 的 `ingest_document` 加 `run_digest: bool = True` 參數（鐵律 1 相鄰，整合階段跑引用鏈回歸）；`routers/backup.py` 加薄端點 `POST /restore`。
 
 ## 4. 資料模型
 
@@ -274,14 +308,16 @@ messages     (id, conversation_id, role, content TEXT,
 | GET | /api/backup/auth/start | 取 Google OAuth 授權網址（M12） |
 | GET | /api/backup/auth/callback | OAuth loopback 回呼，換 token 後存庫（M12） |
 | POST | /api/backup/auth/disconnect | 中斷連接、清除 refresh token → 204（M12） |
+| POST | /api/backup/restore | 從 Drive 匯入還原 → 202；進行中回 409 `operation_running`（M13，見 D11） |
 
-### 備份端點詳解（M12 / T-BK-03，見 D10）
+### 備份端點詳解（M12 / T-BK-03，見 D10；M13 restore 見 D11）
 
-- `GET /api/backup/status` → `200 {connected: bool, running: bool, progress: {phase, current, total}|null, last_run: {at, ok, error?, counts?}|null, interval_hours: int}`。`connected` 依 `gdrive_refresh_token` 是否存在；`running`/`progress` 取自 backup 服務模組級狀態。
+- `GET /api/backup/status` → `200 {connected: bool, running: bool, operation: "backup"|"restore"|null, progress: {phase, current, total}|null, last_run: {at, ok, error?, counts?}|null, last_restore: {at, ok, error?, summary?}|null, interval_hours: int}`。`connected` 依 `gdrive_refresh_token` 是否存在；`running`/`operation`/`progress` 取自 backup 服務模組級狀態（backup 與 restore 共用同一把鎖，`operation` 標示當前進行的操作，見 D11）。`progress.phase`：備份為 `pdfs`/`db`/`manifest`；還原為 `download`/`merge`/`ingest`（`ingest` 階段 `current`/`total` 為第 n／共 m 篇）。`last_run` 為上次備份摘要、`last_restore` 為上次還原摘要（`summary` 結構見 D11），各自持久化於 `backup_last_run`／`restore_last_run`。
 - `POST /api/backup/run` → 未進行 `202 {started: true}`；已在跑 `409 {"error": {"code": "backup_running", "message": ...}}`；未連接（無 refresh token）`400 {"error": {"code": "not_connected"}}`。備份於 BackgroundTask 非同步執行，進度改由 `status` 輪詢。
 - `GET /api/backup/auth/start` → `200 {auth_url}`（含 state + PKCE challenge，state 暫存於服務層記憶體待 callback 驗證）；未設 `gdrive_client_id` → `400 {"error": {"code": "client_id_unset", "message": "請先填入 Google OAuth client_id"}}`。
 - `GET /api/backup/auth/callback?code=&state=` → 驗 state（不符 `400 invalid_state`）→ 以 PKCE verifier 換 token → refresh token 存 `settings_store`（SECRET_KEYS 遮罩）→ 回一頁極簡 HTML「已連接，可關閉此分頁」。此端點供瀏覽器導向，非 JSON API。
 - `POST /api/backup/auth/disconnect` → 清除 `gdrive_refresh_token` → `204`。不刪除遠端任何資料（刪除語意見 D10）。
+- `POST /api/backup/restore` → 未進行 `202 {started: true}`；已在跑（backup 或 restore）`409 {"error": {"code": "operation_running", "message": ...}}`；未連接（無 refresh token）`400 {"error": {"code": "not_connected"}}`；遠端無 `manifest.json` `400 {"error": {"code": "no_backup"}}`；`manifest.format_version != 1` `400 {"error": {"code": "unsupported_format"}}`。還原於 BackgroundTask 非同步執行，進度（`download`/`merge`/`ingest`）與結果 summary 改由 `status` 輪詢；合併規則與冪等保證見 D11。
 
 SSE 事件格式：`event: token`（增量文字）、`event: reasoning`（思考摘要，不入庫）、`event: tool`（工具活動 {name, status}）、`event: citations`（結構化引用）、`event: done`（含 token_usage）、`event: error`。
 
