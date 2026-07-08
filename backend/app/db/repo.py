@@ -1,6 +1,7 @@
 """資料存取層：routers/services 不直接寫 SQL。"""
 
 import json
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import bindparam, text
@@ -541,6 +542,84 @@ async def get_chunks(session: AsyncSession, doc_id: int, limit: int = 500) -> li
         {"doc_id": doc_id, "limit": limit},
     )
     return [_row_to_dict(r) for r in rows]
+
+
+# ---------- backup 匯出（M12 D10 / T-BK-02）----------
+
+# 白名單表 → 明確欄位清單（不用 SELECT *）。
+# documents 不含 embedding 類欄位；chunks 整表不匯出（可由 PDF 重建，見 D10）。
+_DUMP_TABLE_COLUMNS: dict[str, list[str]] = {
+    "documents": [
+        "id",
+        "user_id",
+        "project_id",
+        "title",
+        "filename",
+        "file_path",
+        "page_count",
+        "status",
+        "error_msg",
+        "digest",
+        "token_usage",
+        "created_at",
+    ],
+    "projects": ["id", "user_id", "name", "created_at"],
+    "annotations": [
+        "id",
+        "document_id",
+        "type",
+        "color",
+        "page",
+        "bbox_list",
+        "chunk_id",
+        "selected_text",
+        "note_text",
+        "created_at",
+        "updated_at",
+    ],
+    "glossary_entries": [
+        "id",
+        "document_id",
+        "term",
+        "translation",
+        "target_lang",
+        "page",
+        "bbox_list",
+        "chunk_id",
+        "notes",
+        "created_at",
+    ],
+    "conversations": ["id", "scope", "document_id", "project_id", "title", "model", "created_at"],
+    "messages": [
+        "id",
+        "conversation_id",
+        "role",
+        "content",
+        "citations",
+        "selection",
+        "token_usage",
+        "created_at",
+    ],
+}
+
+
+def _normalize_dump_row(row: dict) -> dict:
+    """datetime → isoformat 字串；JSONB 欄位原樣保留（型別由 DB 驅動層決定）。"""
+    return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in row.items()}
+
+
+async def dump_table_rows(session: AsyncSession, table: str) -> list[dict]:
+    """匯出白名單表的全部列（備份匯出用，M12 T-BK-02）。
+
+    只允許 `_DUMP_TABLE_COLUMNS` 內的表與其明確欄位清單；其餘表（含 chunks）一律拒絕，
+    以避免有人不小心把 embedding 或未來新表夾帶進備份。
+    """
+    columns = _DUMP_TABLE_COLUMNS.get(table)
+    if columns is None:
+        raise ValueError(f"table not allowed for dump: {table}")
+    column_list = ", ".join(columns)
+    rows = await session.execute(text(f"SELECT {column_list} FROM {table} ORDER BY id"))
+    return [_normalize_dump_row(_row_to_dict(r)) for r in rows]
 
 
 # ---------- annotations ----------
