@@ -57,6 +57,26 @@ This only covers chat — embedding still needs a NIM or other OpenAI-compatible
 
 Note: subscription usage is for personal use per Anthropic's consumer terms — don't wire this backend up for shared/production traffic.
 
+### Cloud backup to Google Drive
+
+Connect your own Google Drive in Settings to back up PDFs, annotations, glossary entries, and conversations **one-way to the cloud** (not sync). Backups are incremental: PDFs already on the remote won't re-upload.
+
+#### Setting up Google OAuth client
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project → navigate to it
+3. **APIs & Services** → **Enable APIs and Services** → search and enable **Google Drive API**
+4. **OAuth consent screen** → User Type: **External** → **Publishing status must be set to "In production"** (critical: leaving it in Testing mode causes refresh tokens to expire every 7 days, breaking backups repeatedly)
+5. **Credentials** → **Create Credentials** → **OAuth client ID** → Application type: **Desktop app** → create
+6. Copy your **Client ID** and **Client Secret**
+7. In the app Settings page, "Backup" section: paste client ID and secret, save, then click "Connect Google Drive" — you'll be redirected to authorize; the app reconnects automatically afterward
+
+#### Notes
+
+- **Local development & deployment**: the OAuth flow assumes browser and server are on the same machine (redirect URL is `http://localhost:8000/...`), so it works out of the box.
+- **Remote host deployment**: if your server is on a remote machine, open an SSH tunnel from your local machine: `ssh -L 8000:remote-ip:8000 -L 5173:remote-ip:5173 user@remote-host`, keep it open, then visit `http://localhost:5173` in your browser to authorize.
+- **One-way backup semantics**: deleting a paper locally **does not** delete its backup on Google Drive; each backup snapshot records the full state at that time.
+
 ## Stack
 
 FastAPI · PostgreSQL + pgvector · PyMuPDF | React · TypeScript · PDF.js | hand-rolled RAG (no LangChain) | Docker Compose
