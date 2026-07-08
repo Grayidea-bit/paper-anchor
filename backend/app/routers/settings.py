@@ -26,6 +26,11 @@ class SettingsUpdate(BaseModel):
     claude_oauth_token: str | None = Field(default=None, max_length=2000)
     # T-TR-01：翻譯表目標語言（任意字串直接進 prompt；空字串＝清除回落預設）
     translation_target_lang: str | None = Field(default=None, max_length=60)
+    # M12：Google Drive 備份 OAuth 設定（gdrive_refresh_token / backup_last_run
+    # 不開放 PUT——由 callback／服務層寫入，見 test_settings_store WRITE_EXEMPT）
+    gdrive_client_id: str | None = Field(default=None, max_length=300)
+    gdrive_client_secret: str | None = Field(default=None, max_length=300)
+    backup_interval_hours: int | None = Field(default=None, ge=0, le=8760)
 
 
 def _view() -> dict:

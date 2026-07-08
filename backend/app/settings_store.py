@@ -27,8 +27,19 @@ ALLOWED_KEYS = {
     "llm_chat_models",
     # T-TR-01：翻譯表目標語言（顯示用字串，直接進 prompt；缺省回落「繁體中文」）
     "translation_target_lang",
+    # M12：單向備份到 Google Drive（D10）
+    "gdrive_client_id",  # 使用者 Desktop app OAuth client id
+    "gdrive_client_secret",  # OAuth client secret（SECRET_KEYS 遮罩）
+    "gdrive_refresh_token",  # OAuth refresh token（callback 取得後寫入；PUT 不開放）
+    "backup_interval_hours",  # 定時備份間隔小時數（0＝關閉）
+    "backup_last_run",  # 上次備份時間與結果摘要（服務層寫入；PUT 不開放）
 }
-SECRET_KEYS = {"llm_api_key", "claude_oauth_token"}
+SECRET_KEYS = {
+    "llm_api_key",
+    "claude_oauth_token",
+    "gdrive_client_secret",
+    "gdrive_refresh_token",
+}
 
 _cache: dict | None = None
 
