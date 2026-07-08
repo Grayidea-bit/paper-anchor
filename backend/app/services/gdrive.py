@@ -45,7 +45,7 @@ _ACCESS_TOKEN_SKEW = 60  # 秒；提前視為過期，避免臨界失敗
 _UPLOAD_CHUNK = 1024 * 1024  # 1 MiB 串流分塊
 _REQUEST_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 _UPLOAD_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
-_PENDING_CAP = 128  # 未完成授權暫存上限，超過即清空防記憶體累積
+_PENDING_CAP = 128  # 未完成授權暫存上限，到頂逐出最舊一筆防記憶體累積
 
 
 # ---------- 例外 ----------
@@ -114,8 +114,9 @@ def build_auth_url() -> str:
     if not client_id:
         raise GDriveAuthError("client_id_unset", "請先填入 Google OAuth client_id")
 
-    if len(_pending) >= _PENDING_CAP:
-        _pending.clear()
+    # 到頂逐出最舊一筆（dict 保插入序），不整批清空——避免清掉進行中的合法 state
+    while len(_pending) >= _PENDING_CAP:
+        _pending.pop(next(iter(_pending)))
 
     state = secrets.token_urlsafe(24)
     verifier = secrets.token_urlsafe(64)  # 43–128 字元符合 PKCE 規範
@@ -200,6 +201,14 @@ async def refresh_access_token(*, force: bool = False) -> str:
         raise GDriveError(f"刷新 access token 失敗（HTTP {resp.status_code}: {_token_err(resp)}）")
 
     return _store_access_token(resp.json())
+
+
+def forget_access_token() -> None:
+    """清除記憶體 access token 快取（disconnect 時呼叫，防禦縱深：
+    不留約 1 小時仍有效的 access token）。"""
+    global _access_token, _access_expires_at
+    _access_token = None
+    _access_expires_at = 0.0
 
 
 def _store_access_token(body: dict) -> str:

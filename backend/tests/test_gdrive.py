@@ -88,6 +88,15 @@ class TestBuildAuthUrl:
             gdrive.build_auth_url()
         assert exc.value.code == "client_id_unset"
 
+    def test_pending_cap_evicts_oldest_only(self):
+        # 到頂逐出最舊一筆，不整批清空（保留進行中的合法 state）
+        for i in range(gdrive._PENDING_CAP):
+            gdrive._pending[f"st-{i}"] = f"v-{i}"
+        gdrive.build_auth_url()
+        assert len(gdrive._pending) == gdrive._PENDING_CAP
+        assert "st-0" not in gdrive._pending  # 最舊一筆被逐出
+        assert "st-1" in gdrive._pending  # 其餘仍在
+
 
 # ---------- OAuth：授權碼換 token ----------
 
@@ -171,6 +180,20 @@ class TestRefreshAccessToken:
         with pytest.raises(gdrive.GDriveDisconnectedError):
             await gdrive.refresh_access_token()
 
+    async def test_non_invalid_grant_failure_raises_gdrive_error(self, monkeypatch):
+        # token 端點非 invalid_grant 的失敗（如 5xx）→ GDriveError，非斷線例外
+        _install(monkeypatch, lambda r: httpx.Response(500, json={"error": "internal_failure"}))
+        with pytest.raises(gdrive.GDriveError) as exc:
+            await gdrive.refresh_access_token()
+        assert not isinstance(exc.value, gdrive.GDriveDisconnectedError)
+        assert "rtoken" not in str(exc.value)  # 訊息不含 refresh token
+
+    def test_forget_access_token_clears_cache(self):
+        _prime_access_token()
+        gdrive.forget_access_token()
+        assert gdrive._access_token is None
+        assert gdrive._access_expires_at == 0.0
+
 
 # ---------- Drive REST：資料夾 ----------
 
@@ -241,6 +264,30 @@ class TestUploadFile:
         _install(monkeypatch, handler)
         result = await gdrive.upload_file("folder", "big.pdf", str(pdf), "application/pdf")
         assert result["id"] == "f2"
+
+    async def test_streamed_upload_retries_with_full_body(self, monkeypatch, tmp_path):
+        # 串流上傳首次 PUT 503 → 退避重試：content_factory 須重建 generator
+        # （檔案重開、非耗盡的舊串流），第二次 PUT body 必須完整。
+        _prime_access_token()
+        pdf = tmp_path / "retry.pdf"
+        pdf.write_bytes(b"full-streamed-body")
+        session_url = "https://upload.example/session/retry"
+        put_bodies: list[bytes] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST":
+                return httpx.Response(200, headers={"Location": session_url})
+            put_bodies.append(request.content)
+            if len(put_bodies) == 1:
+                return httpx.Response(503, text="backend unavailable")
+            return httpx.Response(200, json={"id": "f3"})
+
+        _install(monkeypatch, handler)
+        result = await gdrive.upload_file("folder", "retry.pdf", str(pdf), "application/pdf")
+
+        assert result["id"] == "f3"
+        assert len(put_bodies) == 2
+        assert put_bodies[1] == b"full-streamed-body"  # 重試 body 完整非空/非截斷
 
 
 # ---------- Drive REST：重試與 401 刷新 ----------

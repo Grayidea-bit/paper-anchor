@@ -441,12 +441,31 @@ class TestAuthCallbackEndpoint:
         assert "已連接" in resp.text
         assert fake_settings_store["gdrive_refresh_token"] == "new-refresh-token"
 
-    async def test_state_mismatch_returns_400(self, async_client, fake_settings_store):
+    async def test_state_mismatch_returns_failure_html(self, async_client, fake_settings_store):
+        # 瀏覽器端點一律回 HTML：state 不符走失敗頁，不回裸 JSON
         resp = await async_client.get(
             "/api/backup/auth/callback", params={"code": "c", "state": "unknown-state"}
         )
         assert resp.status_code == 400
-        assert resp.json()["error"]["code"] == "invalid_state"
+        assert resp.headers["content-type"].startswith("text/html")
+        assert "連接失敗" in resp.text
+        assert "gdrive_refresh_token" not in fake_settings_store
+
+    async def test_exchange_failure_returns_failure_html(
+        self, async_client, fake_settings_store, monkeypatch
+    ):
+        # exchange 失敗（如 Google 未回 refresh_token）也統一渲染失敗頁，訊息經 escape
+        async def _fake_exchange(code, state):
+            raise gdrive.GDriveError("Google 未回傳 refresh_token（<test>）")
+
+        monkeypatch.setattr(backup_router, "exchange_code", _fake_exchange)
+        resp = await async_client.get(
+            "/api/backup/auth/callback", params={"code": "c", "state": "st"}
+        )
+        assert resp.status_code == 400
+        assert resp.headers["content-type"].startswith("text/html")
+        assert "連接失敗" in resp.text
+        assert "&lt;test&gt;" in resp.text  # html.escape 生效
         assert "gdrive_refresh_token" not in fake_settings_store
 
     async def test_google_error_param_returns_failure_html(self, async_client, fake_settings_store):
@@ -462,6 +481,10 @@ class TestAuthCallbackEndpoint:
 class TestDisconnectEndpoint:
     async def test_disconnect_clears_refresh_token(self, async_client, fake_settings_store):
         fake_settings_store["gdrive_refresh_token"] = "rtoken"
+        gdrive._access_token = "still-valid-access"  # 模擬記憶體中尚有效的 access token
+        gdrive._access_expires_at = 9e9
         resp = await async_client.post("/api/backup/auth/disconnect")
         assert resp.status_code == 204
         assert "gdrive_refresh_token" not in fake_settings_store
+        # 防禦縱深：disconnect 同時清除記憶體 access token 快取
+        assert gdrive._access_token is None

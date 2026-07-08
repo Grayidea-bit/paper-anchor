@@ -158,7 +158,7 @@ PaperAnchor Backup/
 - **PDF**：保留 UUID 檔名（原始檔名存於 `documents.json` 的 `filename` 欄）；直接從 `/data/uploads` 串流上傳，不落地複製。增量策略：先列遠端 `pdfs/`，同名即跳過（append-only）。
 - **DB dump**：每次全量覆蓋（Drive `files.update` 同一 file id）；dump 僅在暫存目錄 `/data/backup_staging/` 落地，上傳後清除。白名單表、明確欄位、`datetime → isoformat`；`settings.json` 只含非 SECRET_KEYS 鍵。
 - **不備份 `chunks`／`embedding`**（可由 PDF 重建）；`manifest.json` 記 `embed_model`／`embed_dim` 供未來還原判斷是否需重嵌。
-- **manifest 結構**：`{format_version, created_at, app_version, embed_model, embed_dim, counts{documents, projects, annotations, glossary_entries, conversations, messages, pdfs}, pdfs: [{name, document_id, size}]}`。上傳順序：先 PDF、再 `db/`、**最後 manifest**——任一步失敗即中止本輪且不上傳 manifest，遠端維持上次完整備份基準。
+- **manifest 結構**：`{format_version, created_at, app_version, embed_model, embed_dim, counts{documents, projects, annotations, glossary_entries, conversations, messages, pdfs}, pdfs: [{name, document_id, size}]}`。上傳順序：先 PDF、再 `db/`、**最後 manifest**——任一步失敗即中止本輪且不上傳 manifest。保證限縮如下：manifest 存在＝一次完整備份完成的標記；`db/` dumps 為全量覆蓋（`files.update` 同一 file id，中途失敗時遠端可能是「新 db + 舊 manifest」，**不保證與 manifest counts 逐筆一致**）；`pdfs/` 為 append-only，舊 manifest 的 `pdfs` 清單永遠是遠端現存檔案的子集，故**依 manifest 還原永遠一致**。
 
 #### OAuth 設計（loopback）
 - **使用者自建 Desktop app client**：於 Google Cloud Console 建自己的 OAuth client（型別 Desktop app），把 client_id／client_secret 貼進設定頁。

@@ -158,10 +158,12 @@
 - [x] [opus] T-BK-01 `services/gdrive.py`：OAuth loopback（state + PKCE）+ Drive REST client（4 函式、resumable upload、429/5xx 退避重試）+ settings 新鍵（store SECRET_KEYS + SettingsUpdate 同步）+ httpx MockTransport 測試。安全敏感，不下放。依賴：T-BK-00
 - [x] [sonnet] T-BK-02 `services/backup.py` 匯出：`repo.dump_table_rows`（白名單表、排除 embedding、datetime→isoformat）+ JSON dumps + manifest v1 + staging 暫存；snapshot 測試（斷言 secrets 不在 settings.json、embedding 不在任何 dump）。依賴：T-BK-00
 - [x] [sonnet] T-BK-03 編排 orchestration + `routers/backup.py` 五端點 + `asyncio.Lock` 併發防護（409 backup_running）+ `backup_last_run` 持久化 + 增量比對（遠端已存在 PDF 跳過）+ 失敗不上傳 manifest；測試。依賴：T-BK-01、T-BK-02
-- [ ] [sonnet] T-BK-04 lifespan 常駐排程 task（60s tick、`backup_interval_hours` + 持久化 `backup_last_run` 判斷間隔、shutdown cancel、`--reload` 不重跑）；**不引入 APScheduler**；fake clock 測試。依賴：T-BK-03
+- [x] [sonnet] T-BK-04 lifespan 常駐排程 task（60s tick、`backup_interval_hours` + 持久化 `backup_last_run` 判斷間隔、shutdown cancel、`--reload` 不重跑）；**不引入 APScheduler**；fake clock 測試。依賴：T-BK-03
+  - 發現事項：節流以「上次執行時間」計（不分成敗）——若只認成功時間，失敗後會每 tick 狂重試；失敗後等滿一個 interval 才自動重試，手動觸發不受限（backup_scheduler.py 檔頭有註記）。
 - [x] [sonnet] T-BK-05 前端：`client.ts`（`BackupStatus` type + 4 函式）+ `backupStore`（狀態 + 動作 + running 時每 2s 輪詢）+ `SettingsModal` 備份區塊（client_id/secret 遮罩輸入 → 連接 Google Drive → 立即備份 + 進度 + 上次結果 + 間隔設定）+ i18n（zh-TW/en 各約 10 鍵）。依賴：T-BK-00（介面定案後可與 T-BK-03 並行）
 - [x] [haiku] T-BK-06 README：Google OAuth client 申請步驟（Desktop app、`drive.file` scope、**須設 In production**——Testing 模式 refresh token 7 天過期）+ 遠端部署 SSH port-forward 註記；roadmap 勾選。依賴：T-BK-01～T-BK-04
 - [ ] [opus] T-BK-07 整合審查 + 真帳號 E2E（連接→立即備份→增量→重啟不重跑→斷網失敗遠端保完整→pytest/ruff/npm build 全綠）+ 引用鏈回歸（eval_citations 不退化，鐵律 1）。依賴：全部
+  - 進度：code review 完成（無高嚴重度；6 項發現已修：D10 原子性措辭限縮、串流上傳重試測試、disconnect 清 access token 快取、_pending FIFO 逐出、callback 一律回 HTML、前端間隔輸入 clamp 8760）；pytest 220 passed / ruff / npm build 全綠；live 端點煙霧測試符合 §5。**待辦：真 Google 帳號 E2E 六步**（需部署者自己的 OAuth client，無法由開發端代跑）。
 - **DoD**：pytest + ruff + `npm run build` 全綠；真 Google 帳號 E2E 六步全過（見計畫檔驗收）；`eval_citations` 不退化；D10 規格與實作一致。
 
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）

@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from app import settings_store
 from app.errors import AppError
 from app.services import backup
-from app.services.gdrive import build_auth_url, exchange_code
+from app.services.gdrive import build_auth_url, exchange_code, forget_access_token
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
 
@@ -56,15 +56,18 @@ async def start_backup_auth() -> dict:
 async def backup_auth_callback(
     code: str | None = None, state: str | None = None, error: str | None = None
 ) -> HTMLResponse:
-    """OAuth loopback 回呼；供瀏覽器導向，非 JSON API。
+    """OAuth loopback 回呼；供瀏覽器導向，非 JSON API——一律回 HTML。
 
-    Google 端拒絕授權時帶 `error` 參數 → 顯示失敗頁；我方 state 驗證失敗
-    （`exchange_code` 拋 `GDriveAuthError`）走既有 AppError handler 回 JSON 400。
+    Google 端拒絕授權時帶 `error` 參數 → 失敗頁；我方 state 驗證失敗或換 token
+    失敗（`exchange_code` 拋 AppError 子類）也統一渲染失敗頁，不回裸 JSON。
     """
     if error:
         return HTMLResponse(_FAILED_HTML.format(message=html.escape(error)), status_code=400)
 
-    refresh_token = await exchange_code(code or "", state or "")
+    try:
+        refresh_token = await exchange_code(code or "", state or "")
+    except AppError as exc:
+        return HTMLResponse(_FAILED_HTML.format(message=html.escape(exc.message)), status_code=400)
     await settings_store.update({"gdrive_refresh_token": refresh_token})
     return HTMLResponse(_CONNECTED_HTML)
 
@@ -73,3 +76,4 @@ async def backup_auth_callback(
 async def disconnect_backup_auth() -> None:
     """中斷連接、清除 refresh token；不刪除遠端任何資料（D10 刪除語意）。"""
     await settings_store.update({"gdrive_refresh_token": ""})
+    forget_access_token()  # 防禦縱深：不留記憶體中仍有效約 1 小時的 access token

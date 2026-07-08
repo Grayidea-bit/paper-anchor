@@ -345,12 +345,16 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 className={styles.input}
                 type="number"
                 min={0}
+                max={8760}
                 value={intervalHours}
                 onChange={(e) => {
                   const parsed = parseInt(e.target.value, 10);
+                  // clamp 0..8760 對齊後端 Pydantic ge=0/le=8760，避免 422
                   setPatch({
                     ...patch,
-                    backup_interval_hours: Number.isFinite(parsed) ? Math.max(0, parsed) : 0,
+                    backup_interval_hours: Number.isFinite(parsed)
+                      ? Math.min(8760, Math.max(0, parsed))
+                      : 0,
                   });
                 }}
               />
