@@ -133,6 +133,56 @@
   - **無效或 None 時回落**：若 `model is None` 或不在允許清單，靜默回落該後端預設（不報錯；digest/healthz 等機制無感呼叫）。回落後的 model 傳入 OpenAI SDK（`OpenAIChatModel(model_override=model)`）或 Claude backend（`_build_options(model=model)`）。
 - **前端行為**：對話區下拉列表值繫結 `conversations.model`；切換時 PATCH 端點寫 DB；支援「無選擇」→回落流程。
 
+### D10 單向備份到 Google Drive（M12）
+
+#### 技術方案取捨（rclone vs Drive REST API）
+- **方案 A（rclone 容器內 binary）／方案 B（rclone + 產 conf）／方案 C（Drive REST API，httpx 直打）**。**使用者拍板方案 C**。
+- **選 C 的理由**：單向備份用不到 rclone 的強項（bisync 雙向、多供應商），但其成本全在——Docker image 裝 binary、產生與維護 `rclone.conf`、rclone 刷新 token 時會改寫 conf 造成雙份 token 狀態、需解析 rclone JSON log 取進度、測試得 mock subprocess。而 OAuth flow 無論哪個方案都得自己寫，rclone 省不掉。方案 C 零新依賴（沿用既有 httpx）、狀態全在 settings 表、可直接單元測試。
+- **rclone 記為已驗證 fallback**：已驗證我們 OAuth 拿到的 token JSON 可直接塞進 `rclone.conf` 的 `[gdrive]` 段（`token = {...}`）驅動 rclone。保留為未來擴充多供應商（S3/OneDrive 等）的驗證過路徑。**兩個坑**須注意：(1) rclone 刷新 access token 時會回寫 conf，與 settings_store 形成雙份可寫狀態，需擇一為權威；(2) conf 內的 scope 必須與我們授權時的 `drive.file` 一致，否則 rclone 會拿舊 scope 重新授權。
+- **供應商存取邊界**：Drive 存取一律收束在 `services/gdrive.py`（OAuth + REST 4 函式窄介面）；換 rclone 實作只動這一層，`services/backup.py` 以上不變。
+
+#### 匯出格式 v1（`format_version: 1`）
+Drive 遠端佈局（**單一鏡像，非快照制**）：
+
+```
+PaperAnchor Backup/
+  manifest.json          ← 最後上傳（原子性標記：有它才算一次完整備份）
+  db/
+    documents.json  projects.json  annotations.json
+    glossary_entries.json  conversations.json  messages.json
+    settings.json        ← 僅非 SECRET_KEYS 鍵（API key／token 絕不出庫，鐵律 6）
+  pdfs/
+    {uuid}.pdf           ← 增量 append-only：遠端已存在同名即跳過
+```
+
+- **PDF**：保留 UUID 檔名（原始檔名存於 `documents.json` 的 `filename` 欄）；直接從 `/data/uploads` 串流上傳，不落地複製。增量策略：先列遠端 `pdfs/`，同名即跳過（append-only）。
+- **DB dump**：每次全量覆蓋（Drive `files.update` 同一 file id）；dump 僅在暫存目錄 `/data/backup_staging/` 落地，上傳後清除。白名單表、明確欄位、`datetime → isoformat`；`settings.json` 只含非 SECRET_KEYS 鍵。
+- **不備份 `chunks`／`embedding`**（可由 PDF 重建）；`manifest.json` 記 `embed_model`／`embed_dim` 供未來還原判斷是否需重嵌。
+- **manifest 結構**：`{format_version, created_at, app_version, embed_model, embed_dim, counts{documents, projects, annotations, glossary_entries, conversations, messages, pdfs}, pdfs: [{name, document_id, size}]}`。上傳順序：先 PDF、再 `db/`、**最後 manifest**——任一步失敗即中止本輪且不上傳 manifest，遠端維持上次完整備份基準。
+
+#### OAuth 設計（loopback）
+- **使用者自建 Desktop app client**：於 Google Cloud Console 建自己的 OAuth client（型別 Desktop app），把 client_id／client_secret 貼進設定頁。
+- **不提供共用 OAuth app**：client 憑證入公開 repo 違反鐵律 6；所有部署者共吃一個 client 的 API 配額；app 維運與 Google 審查責任落到專案作者身上。rclone 內建共用 client 被限流、官方建議自建，即為前例。
+- **Scope**：`https://www.googleapis.com/auth/drive.file`（最小權限、非敏感、免 Google 審查）。
+- **Flow**：backend 自行實作 loopback。`redirect_uri = http://localhost:8000/api/backup/auth/callback`（Desktop client 允許任意 localhost port，callback 就是普通 FastAPI route）。帶 `state`（CSRF 防護）+ PKCE（code_challenge/verifier）；`access_type=offline&prompt=consent` 換取 refresh token。
+- **Token 存放**：refresh token 存 `settings_store`（`gdrive_refresh_token`，列入 SECRET_KEYS 遮罩，沿用 `claude_oauth_token` 先例）；access token 只存記憶體、過期即以 refresh token 換新。`invalid_grant`（refresh token 失效）→ 服務層回報斷線、前端提示重新連接。
+
+#### 刪除語意
+- 備份**非同步**（backup ≠ sync）：本機刪除文獻**不會**刪除遠端對應 PDF 或 DB dump 內容。遠端 `manifest.json` 的 `pdfs` 清單即該次備份的「現存集合」，還原時以 manifest 為準；遠端殘留的舊 PDF 不影響還原正確性。
+
+#### 新增 settings 鍵（M12）
+沿用 `settings` 表（白名單鍵，`settings_store` 快取）：
+
+| 鍵 | 說明 | Secret |
+|---|---|---|
+| `gdrive_client_id` | 使用者 Desktop app OAuth client id | 否 |
+| `gdrive_client_secret` | OAuth client secret | **是**（SECRET_KEYS 遮罩） |
+| `gdrive_refresh_token` | OAuth refresh token（callback 取得後寫入） | **是**（SECRET_KEYS 遮罩） |
+| `backup_interval_hours` | 定時備份間隔小時數（0＝關閉） | 否 |
+| `backup_last_run` | 上次備份時間與結果摘要（服務層寫入，PUT 不開放） | 否 |
+
+> `gdrive_client_id`／`gdrive_client_secret`／`backup_interval_hours` 須同步加入 `routers/settings.py` 的 `SettingsUpdate`（漏加會 PUT 靜默丟棄，見 M11 發現事項）；`gdrive_refresh_token`／`backup_last_run` 不開放 PUT，列入守護測試 WRITE_EXEMPT。
+
 ## 4. 資料模型
 
 ```sql
@@ -219,6 +269,19 @@ messages     (id, conversation_id, role, content TEXT,
 | GET/PUT | /api/settings | 執行期設定（api_key 遮罩為 `llm_api_key_set`；缺席=不變、空字串=清除） |
 | GET | /api/tools | 已註冊 LLM 工具清單（唯讀） |
 | GET | /api/usage | 累計 token + `rpm`（最近 60 秒 LLM 請求數） |
+| GET | /api/backup/status | 備份狀態（M12，見 D10） |
+| POST | /api/backup/run | 觸發立即備份 → 202；進行中回 409 `backup_running`（M12） |
+| GET | /api/backup/auth/start | 取 Google OAuth 授權網址（M12） |
+| GET | /api/backup/auth/callback | OAuth loopback 回呼，換 token 後存庫（M12） |
+| POST | /api/backup/auth/disconnect | 中斷連接、清除 refresh token → 204（M12） |
+
+### 備份端點詳解（M12 / T-BK-03，見 D10）
+
+- `GET /api/backup/status` → `200 {connected: bool, running: bool, progress: {phase, current, total}|null, last_run: {at, ok, error?, counts?}|null, interval_hours: int}`。`connected` 依 `gdrive_refresh_token` 是否存在；`running`/`progress` 取自 backup 服務模組級狀態。
+- `POST /api/backup/run` → 未進行 `202 {started: true}`；已在跑 `409 {"error": {"code": "backup_running", "message": ...}}`；未連接（無 refresh token）`400 {"error": {"code": "not_connected"}}`。備份於 BackgroundTask 非同步執行，進度改由 `status` 輪詢。
+- `GET /api/backup/auth/start` → `200 {auth_url}`（含 state + PKCE challenge，state 暫存於服務層記憶體待 callback 驗證）；未設 `gdrive_client_id` → `400 {"error": {"code": "client_id_unset", "message": "請先填入 Google OAuth client_id"}}`。
+- `GET /api/backup/auth/callback?code=&state=` → 驗 state（不符 `400 invalid_state`）→ 以 PKCE verifier 換 token → refresh token 存 `settings_store`（SECRET_KEYS 遮罩）→ 回一頁極簡 HTML「已連接，可關閉此分頁」。此端點供瀏覽器導向，非 JSON API。
+- `POST /api/backup/auth/disconnect` → 清除 `gdrive_refresh_token` → `204`。不刪除遠端任何資料（刪除語意見 D10）。
 
 SSE 事件格式：`event: token`（增量文字）、`event: reasoning`（思考摘要，不入庫）、`event: tool`（工具活動 {name, status}）、`event: citations`（結構化引用）、`event: done`（含 token_usage）、`event: error`。
 

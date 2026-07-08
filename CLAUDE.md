@@ -25,6 +25,7 @@
 - Commit：`feat|fix|refactor|test|docs(scope): 描述`，一張任務卡至少一個 commit。
 - 完成定義（DoD）：程式碼 + 測試 + 任務卡驗收步驟實際執行過 + `docs/03-roadmap.md` 勾選。
 - 卡住升級：Haiku/Sonnet 遇到規格模糊或跨模組決策 → 把問題與選項寫進任務卡，標注 `needs-decision`，停止該卡，不要自行拍板。
+- 規劃須含模型分工：每份 plan 產出必須替每張任務卡標注指派模型（Opus/Sonnet/Haiku）。安全敏感（OAuth、金鑰處理）與整合審查一律 Opus；小模型不勝任的卡直接升級指派，不硬塞。
 
 ## 程式碼慣例
 
@@ -57,6 +58,6 @@ cd frontend && npm run build  # 型別檢查 + 打包
 
 ## 目前狀態
 
-- 階段：**規劃完成，尚未開工**。下一步：M0 專案骨架（見 `docs/03-roadmap.md`）。
+- 階段：**M0–M11 已完成**，進行中 **M12 雲端備份（Google Drive，單向）**（見 `docs/03-roadmap.md`）。
 - LLM 供應商：**NVIDIA NIM**（使用者已有 API key，開工時填入 `.env`；注意事項見 `docs/02-architecture.md` D5）。
 - 驗收測試論文：3 篇已就位（`docs/fixtures/`），皆為 arXiv 版面，之後可再補其他版面。

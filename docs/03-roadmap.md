@@ -151,6 +151,19 @@
 - **DoD**：✅ pytest **143 passed**、ruff/format 全綠、npm run build 過；migrations 006/007 套用 dev DB。
 - 發現事項/修正：~~settings 疑似要重啟 api 才生效~~ → 根因是 **router SettingsUpdate 漏 `translation_target_lang` 欄位**（Pydantic 靜默丟棄未知欄位，PUT 200 但未持久化）——已修＋守護測試（白名單鍵必須有對應 router 欄位，防同類再發）；E2E 驗證 roundtrip 與英文翻譯生效。另 T-TR-01 順修 conftest `async_client` 的 SessionLocal patch 從未生效之既有 bug。
 
+### M12 — 雲端備份（Google Drive，單向）
+- **目標**：把 PDF、標註、翻譯表、對話等本機資料**單向備份**到使用者自己的 Google Drive（非雙向同步）。設定頁「立即備份」按鈕 + 可設定的定時備份；匯出格式版本化（`format_version: 1`），預留未來 import/還原。**技術方案（使用者拍板）**：不用 rclone，直接打 Google Drive REST API（httpx，零新依賴）；rclone 記為已驗證 fallback（見 D10）。設計全文見計畫檔與 `docs/02-architecture.md` D10。
+- **供應商邊界**：Drive 存取收束在 `services/gdrive.py`（OAuth loopback + REST 4 函式窄介面）；狀態全走 settings 表，**無 DB migration**。
+- [x] [opus] T-BK-00 **文件先行**（鐵律 5）：02-architecture §5 加 5 條 backup 端點、新增 D10 節（rclone vs Drive API 取捨、匯出格式 v1、OAuth 設計、刪除語意、settings 新鍵）、03-roadmap 開 M12 各卡、**CLAUDE.md 加規劃須含模型分工規則**。依賴：—
+- [ ] [opus] T-BK-01 `services/gdrive.py`：OAuth loopback（state + PKCE）+ Drive REST client（4 函式、resumable upload、429/5xx 退避重試）+ settings 新鍵（store SECRET_KEYS + SettingsUpdate 同步）+ httpx MockTransport 測試。安全敏感，不下放。依賴：T-BK-00
+- [ ] [sonnet] T-BK-02 `services/backup.py` 匯出：`repo.dump_table_rows`（白名單表、排除 embedding、datetime→isoformat）+ JSON dumps + manifest v1 + staging 暫存；snapshot 測試（斷言 secrets 不在 settings.json、embedding 不在任何 dump）。依賴：T-BK-00
+- [ ] [sonnet] T-BK-03 編排 orchestration + `routers/backup.py` 五端點 + `asyncio.Lock` 併發防護（409 backup_running）+ `backup_last_run` 持久化 + 增量比對（遠端已存在 PDF 跳過）+ 失敗不上傳 manifest；測試。依賴：T-BK-01、T-BK-02
+- [ ] [sonnet] T-BK-04 lifespan 常駐排程 task（60s tick、`backup_interval_hours` + 持久化 `backup_last_run` 判斷間隔、shutdown cancel、`--reload` 不重跑）；**不引入 APScheduler**；fake clock 測試。依賴：T-BK-03
+- [ ] [sonnet] T-BK-05 前端：`client.ts`（`BackupStatus` type + 4 函式）+ `backupStore`（狀態 + 動作 + running 時每 2s 輪詢）+ `SettingsModal` 備份區塊（client_id/secret 遮罩輸入 → 連接 Google Drive → 立即備份 + 進度 + 上次結果 + 間隔設定）+ i18n（zh-TW/en 各約 10 鍵）。依賴：T-BK-00（介面定案後可與 T-BK-03 並行）
+- [ ] [haiku] T-BK-06 README：Google OAuth client 申請步驟（Desktop app、`drive.file` scope、**須設 In production**——Testing 模式 refresh token 7 天過期）+ 遠端部署 SSH port-forward 註記；roadmap 勾選。依賴：T-BK-01～T-BK-04
+- [ ] [opus] T-BK-07 整合審查 + 真帳號 E2E（連接→立即備份→增量→重啟不重跑→斷網失敗遠端保完整→pytest/ruff/npm build 全綠）+ 引用鏈回歸（eval_citations 不退化，鐵律 1）。依賴：全部
+- **DoD**：pytest + ruff + `npm run build` 全綠；真 Google 帳號 E2E 六步全過（見計畫檔驗收）；`eval_citations` 不退化；D10 規格與實作一致。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown
