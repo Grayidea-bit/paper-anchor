@@ -138,17 +138,30 @@ export interface GlossaryCreate {
   notes?: string;
 }
 
+/** 帶後端 error.code 的錯誤（如 backup_running / not_connected / client_id_unset）。
+ * 既有呼叫端仍可只讀 e.message；需要分流時用 e instanceof ApiError && e.code === "..." */
+export class ApiError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, init);
   if (!resp.ok) {
     let message = `API ${resp.status}`;
+    let code: string | undefined;
     try {
       const body = await resp.json();
       message = body?.error?.message ?? body?.detail ?? message;
+      code = body?.error?.code;
     } catch {
       /* keep default */
     }
-    throw new Error(message);
+    throw new ApiError(message, code);
   }
   if (resp.status === 204) {
     return undefined as T;
@@ -191,6 +204,12 @@ export interface SettingsView {
   chat_backend?: ChatBackend;
   claude_oauth_token_set: boolean;
   translation_target_lang?: string;
+  /** Google OAuth client id（非 secret，直接回傳） */
+  gdrive_client_id?: string;
+  /** Google OAuth client secret 是否已設定（SECRET_KEYS 遮罩，值本身不回傳） */
+  gdrive_client_secret_set: boolean;
+  /** 定時備份間隔小時數（0＝關閉） */
+  backup_interval_hours?: number;
   defaults: {
     llm_base_url: string;
     llm_chat_model: string;
@@ -208,6 +227,9 @@ export interface SettingsPatch {
   chat_backend?: ChatBackend;
   claude_oauth_token?: string;
   translation_target_lang?: string;
+  gdrive_client_id?: string;
+  gdrive_client_secret?: string;
+  backup_interval_hours?: number;
 }
 
 export interface ToolInfo {
@@ -511,4 +533,45 @@ export function retranslateGlossaryEntry(id: number): Promise<GlossaryEntry> {
 
 export function deleteGlossaryEntry(id: number): Promise<void> {
   return request<void>(`/api/glossary/${id}`, { method: "DELETE" });
+}
+
+// ---- backup（M12 / D10，見 docs/02-architecture.md §5「備份端點詳解」） ----
+
+export interface BackupProgress {
+  phase: string;
+  current: number;
+  total: number;
+}
+
+export interface BackupLastRun {
+  at: string;
+  ok: boolean;
+  error?: string;
+  counts?: Record<string, number>;
+}
+
+export interface BackupStatus {
+  connected: boolean;
+  running: boolean;
+  progress: BackupProgress | null;
+  last_run: BackupLastRun | null;
+  interval_hours: number;
+}
+
+export function getBackupStatus(): Promise<BackupStatus> {
+  return request<BackupStatus>("/api/backup/status");
+}
+
+/** 202 {started: true}；已在跑 409 backup_running；未連接 400 not_connected（見 ApiError.code） */
+export function runBackup(): Promise<{ started: boolean }> {
+  return request<{ started: boolean }>("/api/backup/run", { method: "POST" });
+}
+
+/** 未設 gdrive_client_id 時 400 client_id_unset（見 ApiError.code） */
+export function getBackupAuthUrl(): Promise<{ auth_url: string }> {
+  return request<{ auth_url: string }>("/api/backup/auth/start");
+}
+
+export function disconnectBackup(): Promise<void> {
+  return request<void>("/api/backup/auth/disconnect", { method: "POST" });
 }

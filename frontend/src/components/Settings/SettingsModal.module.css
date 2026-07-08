@@ -230,6 +230,23 @@
   font: 400 12px var(--mono);
 }
 
+.backupOk {
+  color: var(--ok);
+  font: 400 12px var(--mono);
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--error);
+  flex-shrink: 0;
+}
+
+.statusDot[data-ok="true"] {
+  background: var(--ok);
+}
+
 .footer {
   padding: 12px 20px;
   border-top: 1px solid var(--hairline);

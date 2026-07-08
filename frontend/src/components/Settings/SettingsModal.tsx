@@ -19,6 +19,9 @@ import {
   useT,
   useUiStore,
 } from "../../i18n";
+import { useBackupStore } from "../../stores/backupStore";
+
+const BACKUP_INTERVAL_PRESETS = [0, 24, 168];
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const t = useT();
@@ -36,10 +39,25 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const backupStatus = useBackupStore((s) => s.status);
+  const backupLoading = useBackupStore((s) => s.loading);
+  const backupError = useBackupStore((s) => s.error);
+  const fetchBackupStatus = useBackupStore((s) => s.fetchStatus);
+  const runBackupNow = useBackupStore((s) => s.runBackup);
+  const connectBackup = useBackupStore((s) => s.connect);
+  const disconnectBackup = useBackupStore((s) => s.disconnect);
+  const stopBackupPolling = useBackupStore((s) => s.stopPolling);
+
   useEffect(() => {
     getSettings().then(setView).catch((e: Error) => setError(e.message));
     getTools().then(setTools).catch(() => undefined);
   }, []);
+
+  // 備份狀態：開啟時抓一次；元件卸載（modal 關閉）時停止任何輪詢，避免洩漏 interval
+  useEffect(() => {
+    void fetchBackupStatus();
+    return () => stopBackupPolling();
+  }, [fetchBackupStatus, stopBackupPolling]);
 
   // 用量：開啟期間每 5 秒輪詢
   useEffect(() => {
@@ -68,8 +86,9 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const field = (key: "llm_base_url" | "llm_chat_model" | "system_prompt_extra") =>
-    (patch[key] !== undefined ? patch[key] : view?.[key] ?? "");
+  const field = (
+    key: "llm_base_url" | "llm_chat_model" | "system_prompt_extra" | "gdrive_client_id",
+  ) => (patch[key] !== undefined ? patch[key] : view?.[key] ?? "");
 
   const backend: ChatBackend = patch.chat_backend ?? view?.chat_backend ?? "openai";
 
@@ -94,6 +113,19 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       setSaving(false);
     }
   };
+
+  // 連接 Google Drive 依賴後端已存好的 client_id（PUT 後才生效），
+  // 未存過或有未儲存變更時 disabled 並提示原因
+  const savedClientId = view?.gdrive_client_id ?? "";
+  const backupConnected = backupStatus?.connected ?? false;
+  let connectDisabledReason: string | null = null;
+  if (!backupConnected) {
+    if (savedClientId.length === 0) connectDisabledReason = t.settingsBackupNeedClientId;
+    else if (dirty) connectDisabledReason = t.settingsBackupNeedSave;
+  }
+  const canConnect = !backupConnected && !connectDisabledReason && !backupLoading;
+  const canRunBackup = backupConnected && !backupStatus?.running;
+  const intervalHours = patch.backup_interval_hours ?? view?.backup_interval_hours ?? 0;
 
   return (
     <div className={styles.overlay} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -232,6 +264,132 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               onChange={(e) => setPatch({ ...patch, system_prompt_extra: e.target.value })}
             />
             <p className={styles.hint}>{t.settingsSystemPromptHint}</p>
+          </section>
+
+          {/* 備份（M12 / D10） */}
+          <section className={styles.section}>
+            <h3 className={styles.sectionTitle}>{t.settingsBackup}</h3>
+
+            <label className={styles.label}>{t.settingsBackupClientId}</label>
+            <input
+              className={styles.input}
+              autoComplete="off"
+              value={field("gdrive_client_id")}
+              onChange={(e) => setPatch({ ...patch, gdrive_client_id: e.target.value })}
+            />
+
+            <label className={styles.label}>{t.settingsBackupClientSecret}</label>
+            <div className={styles.keyRow}>
+              <input
+                className={styles.input}
+                type="password"
+                autoComplete="new-password"
+                name="gdrive-client-secret"
+                value={patch.gdrive_client_secret ?? ""}
+                placeholder={
+                  view?.gdrive_client_secret_set
+                    ? t.settingsApiKeySet
+                    : t.settingsBackupSecretUnset
+                }
+                onChange={(e) => setPatch({ ...patch, gdrive_client_secret: e.target.value })}
+              />
+              {view?.gdrive_client_secret_set && (
+                <button
+                  className={styles.miniBtn}
+                  onClick={() => setPatch({ ...patch, gdrive_client_secret: "" })}
+                >
+                  {t.settingsClearKey}
+                </button>
+              )}
+            </div>
+
+            <div className={styles.keyRow} style={{ marginTop: 12, alignItems: "center" }}>
+              <span className={styles.statusDot} data-ok={backupConnected ? "true" : "false"} />
+              <span className={styles.hint} style={{ marginTop: 0 }}>
+                {backupConnected ? t.settingsBackupConnected : t.settingsBackupNotConnected}
+              </span>
+            </div>
+            <div className={styles.keyRow} style={{ marginTop: 8 }}>
+              {backupConnected ? (
+                <button className={styles.miniBtn} onClick={() => void disconnectBackup()}>
+                  {t.settingsBackupDisconnect}
+                </button>
+              ) : (
+                <button
+                  className={styles.miniBtn}
+                  disabled={!canConnect}
+                  onClick={() => void connectBackup()}
+                >
+                  {t.settingsBackupConnect}
+                </button>
+              )}
+            </div>
+            {connectDisabledReason && <p className={styles.hint}>{connectDisabledReason}</p>}
+
+            <label className={styles.label} style={{ marginTop: 14 }}>
+              {t.settingsBackupInterval}
+            </label>
+            <div className={styles.segmented}>
+              {BACKUP_INTERVAL_PRESETS.map((h) => (
+                <button
+                  key={h}
+                  className={intervalHours === h ? styles.segActive : styles.segBtn}
+                  onClick={() => setPatch({ ...patch, backup_interval_hours: h })}
+                >
+                  {h === 0 ? t.settingsBackupIntervalOff : `${h}h`}
+                </button>
+              ))}
+            </div>
+            <div className={styles.keyRow} style={{ marginTop: 8, alignItems: "center" }}>
+              <input
+                className={styles.input}
+                type="number"
+                min={0}
+                value={intervalHours}
+                onChange={(e) => {
+                  const parsed = parseInt(e.target.value, 10);
+                  setPatch({
+                    ...patch,
+                    backup_interval_hours: Number.isFinite(parsed) ? Math.max(0, parsed) : 0,
+                  });
+                }}
+              />
+              <span className={styles.hint} style={{ marginTop: 0 }}>
+                {t.settingsBackupIntervalCustomHours}
+              </span>
+            </div>
+
+            <button
+              className={styles.miniBtn}
+              style={{ marginTop: 14 }}
+              disabled={!canRunBackup}
+              onClick={() => void runBackupNow()}
+            >
+              {t.settingsBackupRunNow}
+            </button>
+            {backupStatus?.running && backupStatus.progress && (
+              <p className={styles.hint}>
+                {t.settingsBackupProgress(
+                  backupStatus.progress.phase,
+                  backupStatus.progress.current,
+                  backupStatus.progress.total,
+                )}
+              </p>
+            )}
+
+            {backupStatus?.last_run ? (
+              <p className={backupStatus.last_run.ok ? styles.backupOk : styles.error}>
+                {t.settingsBackupLastRun}: {new Date(backupStatus.last_run.at).toLocaleString()}
+                {backupStatus.last_run.ok ? " ✓" : ` — ${backupStatus.last_run.error ?? ""}`}
+              </p>
+            ) : (
+              <p className={styles.hint}>{t.settingsBackupNeverRun}</p>
+            )}
+            {backupError && (
+              <p className={styles.error}>
+                {backupError === "connect_timeout" ? t.settingsBackupConnectTimeout : backupError}
+              </p>
+            )}
           </section>
 
           {/* 語言 / 主題（選項陣列驅動） */}
