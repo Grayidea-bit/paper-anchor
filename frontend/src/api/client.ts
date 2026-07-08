@@ -34,7 +34,9 @@ export interface Citation {
   chunk_id: number;
   page: number;
   bbox_list: BBox[];
-  document_id?: number;
+  /** 缺席＝單篇文獻對話（隱含目前文獻）；還原後查無對應文獻時明確為 null（見 D11），
+   * 此時 page/bbox_list 屬於已不存在的文獻，不得跳轉（見 ChatPane clickCitation） */
+  document_id?: number | null;
   document_title?: string;
 }
 
@@ -550,6 +552,25 @@ export interface BackupLastRun {
   counts?: Record<string, number>;
 }
 
+/** 還原合併結果摘要（見 docs/02-architecture.md D11） */
+export interface RestoreSummary {
+  documents_new: number;
+  documents_skipped: number;
+  annotations_new: number;
+  annotations_updated: number;
+  glossary_new: number;
+  conversations_new: number;
+  messages_new: number;
+  ingest_failed: string[];
+}
+
+export interface BackupLastRestore {
+  at: string;
+  ok: boolean;
+  error?: string;
+  summary?: RestoreSummary;
+}
+
 export interface BackupStatus {
   connected: boolean;
   running: boolean;
@@ -557,6 +578,8 @@ export interface BackupStatus {
   operation?: "backup" | "restore" | null;
   progress: BackupProgress | null;
   last_run: BackupLastRun | null;
+  /** M13 新增：上次還原摘要，後端未部署時可能缺席 */
+  last_restore?: BackupLastRestore | null;
   interval_hours: number;
 }
 
@@ -576,4 +599,9 @@ export function getBackupAuthUrl(): Promise<{ auth_url: string }> {
 
 export function disconnectBackup(): Promise<void> {
   return request<void>("/api/backup/auth/disconnect", { method: "POST" });
+}
+
+/** 202 {started: true}；已在跑（backup 或 restore）409 operation_running；未連接 400 not_connected（見 ApiError.code） */
+export function restoreBackup(): Promise<{ started: boolean }> {
+  return request<{ started: boolean }>("/api/backup/restore", { method: "POST" });
 }

@@ -403,6 +403,9 @@ function Chat({ context }: { context: ChatContext }) {
     (label: number, citations: Citation[]) => {
       const c = citations.find((x) => (x.label ?? x.chunk_index) === label);
       if (!c) return;
+      // document_id 明確為 null＝還原後查無對應文獻（見 D11 remap 規則）：
+      // page/bbox_list 屬於已不存在的文獻，跳到目前文獻只會誤跳，故不動作
+      if (c.document_id === null) return;
       if (c.document_id != null && c.document_id !== documentId) {
         jumpToDocument(c.document_id, { page: c.page, bboxList: c.bbox_list });
       } else {
@@ -704,22 +707,28 @@ function CiteChip({
   const t = useT();
   const documentId = useReaderStore((s) => s.documentId);
   const c = citations.find((x) => (x.label ?? x.chunk_index) === label);
+  // 還原後查無對應文獻（見 D11）：document_id 明確為 null，不可跳轉，視同解析中樣式禁用
+  const orphaned = c != null && c.document_id === null;
   const crossDoc = c?.document_id != null && c.document_id !== documentId;
   const title = c
-    ? crossDoc && c.document_title
-      ? `${c.document_title} · p.${c.page}`
-      : t.jumpToPage(c.page)
+    ? orphaned
+      ? t.citationPending
+      : crossDoc && c.document_title
+        ? `${c.document_title} · p.${c.page}`
+        : t.jumpToPage(c.page)
     : t.citationPending;
-  // 同文獻＝上標式 p.N；跨文獻＝填色「標題 · p.N」；解析中＝原始標籤淡色
+  // 同文獻＝上標式 p.N；跨文獻＝填色「標題 · p.N」；解析中／已還原無對應文獻＝原始標籤淡色
   const text = c
-    ? crossDoc
-      ? `${c.document_title ? shortTitle(c.document_title) : "?"} · p.${c.page}`
-      : display ?? `p.${c.page}`
+    ? orphaned
+      ? (display ?? `[${label}]`)
+      : crossDoc
+        ? `${c.document_title ? shortTitle(c.document_title) : "?"} · p.${c.page}`
+        : display ?? `p.${c.page}`
     : display ?? String(label);
   return (
     <button
-      className={c ? (crossDoc ? styles.citeChipCross : styles.citeChip) : styles.citeChipInactive}
-      disabled={!c}
+      className={c && !orphaned ? (crossDoc ? styles.citeChipCross : styles.citeChip) : styles.citeChipInactive}
+      disabled={!c || orphaned}
       title={title}
       onClick={() => onCite(label, citations)}
     >

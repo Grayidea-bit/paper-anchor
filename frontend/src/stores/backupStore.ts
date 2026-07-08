@@ -10,6 +10,7 @@ export interface BackupState {
   error: string | null;
   fetchStatus: () => Promise<void>;
   runBackup: () => Promise<void>;
+  runRestore: () => Promise<void>;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   startPolling: () => void;
@@ -55,6 +56,16 @@ export const useBackupStore = create<BackupState>((set, get) => ({
     set({ error: null });
     try {
       await api.runBackup();
+      await get().fetchStatus();
+    } catch (err) {
+      set({ error: (err as Error).message });
+    }
+  },
+
+  runRestore: async () => {
+    set({ error: null });
+    try {
+      await api.restoreBackup();
       await get().fetchStatus();
     } catch (err) {
       set({ error: (err as Error).message });

@@ -39,11 +39,13 @@ function phaseLabel(
 export function BackupSection({ view, patch, setPatch, setView, setError }: BackupSectionProps) {
   const t = useT();
   const [autoSaving, setAutoSaving] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
 
   const backupStatus = useBackupStore((s) => s.status);
   const backupLoading = useBackupStore((s) => s.loading);
   const backupError = useBackupStore((s) => s.error);
   const runBackupNow = useBackupStore((s) => s.runBackup);
+  const runRestoreNow = useBackupStore((s) => s.runRestore);
   const connectBackup = useBackupStore((s) => s.connect);
   const disconnectBackup = useBackupStore((s) => s.disconnect);
 
@@ -59,8 +61,12 @@ export function BackupSection({ view, patch, setPatch, setView, setError }: Back
     connectDisabledReason = t.settingsBackupNeedClientId;
   }
   const canConnect = !backupConnected && !connectDisabledReason && !backupLoading && !autoSaving;
+  // running 涵蓋 backup 與 restore（共用同一把服務層鎖，見 D11）：兩顆按鈕互斥
   const canRunBackup = backupConnected && !backupStatus?.running;
+  const canRestore = backupConnected && !backupStatus?.running;
   const intervalHours = patch.backup_interval_hours ?? view?.backup_interval_hours ?? 0;
+  const lastRestore = backupStatus?.last_restore ?? null;
+  const ingestFailed = lastRestore?.ok ? (lastRestore.summary?.ingest_failed ?? []) : [];
 
   // 連接時若憑證兩鍵有未存變更 → 先單獨存這兩鍵，成功後從全域 patch 剔除、同步 view，
   // 再走既有 connect（取 auth_url 開新分頁）流程；避免使用者卡在「要先按儲存」的困惑
@@ -91,6 +97,7 @@ export function BackupSection({ view, patch, setPatch, setView, setError }: Back
   };
 
   return (
+    <>
     <section className={styles.section}>
       <h3 className={styles.sectionTitle}>{t.settingsBackup}</h3>
 
@@ -229,5 +236,71 @@ export function BackupSection({ view, patch, setPatch, setView, setError }: Back
         </p>
       )}
     </section>
+
+    <section className={styles.section}>
+      <h3 className={styles.sectionTitle}>{t.settingsRestore}</h3>
+
+      <button
+        className={styles.miniBtn}
+        disabled={!canRestore}
+        onClick={() => setShowRestoreConfirm(true)}
+      >
+        {t.settingsRestoreRunNow}
+      </button>
+
+      {lastRestore ? (
+        lastRestore.ok ? (
+          <>
+            <p className={styles.backupOk}>
+              {t.settingsRestoreLastRestore}: {new Date(lastRestore.at).toLocaleString()} ✓{" "}
+              {lastRestore.summary ? t.settingsRestoreSummary(lastRestore.summary) : ""}
+            </p>
+            {ingestFailed.length > 0 && (
+              <p className={styles.restoreWarning}>
+                {t.settingsRestoreIngestFailed}: {ingestFailed.join("、")}
+              </p>
+            )}
+          </>
+        ) : (
+          <p className={styles.error}>
+            {t.settingsRestoreLastRestore}: {new Date(lastRestore.at).toLocaleString()} —{" "}
+            {lastRestore.error ?? ""}
+          </p>
+        )
+      ) : (
+        <p className={styles.hint}>{t.settingsRestoreNeverRun}</p>
+      )}
+    </section>
+
+    {showRestoreConfirm && (
+      <div
+        className={styles.overlay}
+        onMouseDown={(e) => e.target === e.currentTarget && setShowRestoreConfirm(false)}
+      >
+        <div className={styles.confirmDialog} role="dialog" aria-label={t.settingsRestoreConfirmTitle}>
+          <p className={styles.confirmTitle}>{t.settingsRestoreConfirmTitle}</p>
+          <ul className={styles.confirmList}>
+            <li>{t.settingsRestoreConfirmPoint1}</li>
+            <li>{t.settingsRestoreConfirmPoint2}</li>
+            <li>{t.settingsRestoreConfirmPoint3}</li>
+          </ul>
+          <div className={styles.confirmActions}>
+            <button className={styles.miniBtn} onClick={() => setShowRestoreConfirm(false)}>
+              {t.cancel}
+            </button>
+            <button
+              className={styles.saveBtn}
+              onClick={() => {
+                setShowRestoreConfirm(false);
+                void runRestoreNow();
+              }}
+            >
+              {t.settingsRestoreConfirmOk}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { RestoreSummary } from "./api/client";
 
 export type Lang = "zh-TW" | "en";
 export type Theme = "dark" | "light";
@@ -172,6 +173,18 @@ const DICT = {
     settingsRestorePhaseDownload: "下載備份",
     settingsRestorePhaseMerge: "合併資料",
     settingsRestorePhaseIngest: "重新解析文獻",
+    settingsRestore: "匯入還原",
+    settingsRestoreRunNow: "從雲端匯入",
+    settingsRestoreLastRestore: "上次匯入",
+    settingsRestoreNeverRun: "尚未執行過",
+    settingsRestoreSummary: (s: RestoreSummary) =>
+      `新增 ${s.documents_new} 篇文獻（略過 ${s.documents_skipped}）、${s.annotations_new} 條標註（更新 ${s.annotations_updated}）、${s.glossary_new} 條翻譯、${s.conversations_new} 串對話`,
+    settingsRestoreIngestFailed: "解析失敗",
+    settingsRestoreConfirmTitle: "從雲端匯入備份？",
+    settingsRestoreConfirmPoint1: "不會刪除任何本地資料",
+    settingsRestoreConfirmPoint2: "同一筆資料以較新者為準",
+    settingsRestoreConfirmPoint3: "匯入的文獻會重新解析與嵌入，需時較久",
+    settingsRestoreConfirmOk: "確認匯入",
   },
   en: {
     appName: "Paper Anchor",
@@ -324,6 +337,18 @@ const DICT = {
     settingsRestorePhaseDownload: "Downloading backup",
     settingsRestorePhaseMerge: "Merging data",
     settingsRestorePhaseIngest: "Re-ingesting papers",
+    settingsRestore: "Import & restore",
+    settingsRestoreRunNow: "Import from cloud",
+    settingsRestoreLastRestore: "Last import",
+    settingsRestoreNeverRun: "Never run",
+    settingsRestoreSummary: (s: RestoreSummary) =>
+      `${s.documents_new} new papers (${s.documents_skipped} skipped), ${s.annotations_new} new annotations (${s.annotations_updated} updated), ${s.glossary_new} new glossary entries, ${s.conversations_new} new conversations`,
+    settingsRestoreIngestFailed: "Failed to re-ingest",
+    settingsRestoreConfirmTitle: "Import backup from the cloud?",
+    settingsRestoreConfirmPoint1: "No local data will be deleted",
+    settingsRestoreConfirmPoint2: "For the same record, the newer version wins",
+    settingsRestoreConfirmPoint3: "Imported papers are re-parsed and re-embedded, which takes a while",
+    settingsRestoreConfirmOk: "Confirm import",
   },
 } as const;
 
