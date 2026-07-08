@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -23,6 +24,7 @@ from app.routers import (
 from app.routers import (
     tools as tools_router,
 )
+from app.services.backup_scheduler import scheduler_loop
 
 
 @asynccontextmanager
@@ -31,7 +33,13 @@ async def lifespan(_: FastAPI):
         await settings_store.ensure_loaded()
     except Exception:
         pass  # DB 未就緒時延後到第一次 API 呼叫
-    yield
+    task = asyncio.create_task(scheduler_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="Paper Anchor", version="0.1.0", lifespan=lifespan)

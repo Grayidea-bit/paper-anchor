@@ -170,6 +170,16 @@ def is_running() -> bool:
     return _lock.locked()
 
 
+def _last_run_or_persisted() -> dict[str, Any] | None:
+    """目前已知最新一次執行紀錄（不論成功或失敗）。
+
+    記憶體 `_last_run`（本次啟動內跑過的結果）優先；冷啟動時回落 `settings_store`
+    持久化的 `backup_last_run`。供 `get_status()` 與排程模組
+    （`services/backup_scheduler.py`，T-BK-04）共用。
+    """
+    return _last_run if _last_run is not None else settings_store.runtime("backup_last_run")
+
+
 async def get_status() -> dict[str, Any]:
     """組出 `GET /api/backup/status` 回應（見 D10 / 02-architecture.md §5）。
 
@@ -178,7 +188,7 @@ async def get_status() -> dict[str, Any]:
     """
     connected = bool(settings_store.runtime("gdrive_refresh_token"))
     interval_hours = settings_store.runtime("backup_interval_hours", 0) or 0
-    last_run = _last_run if _last_run is not None else settings_store.runtime("backup_last_run")
+    last_run = _last_run_or_persisted()
     return {
         "connected": connected,
         "running": is_running(),
