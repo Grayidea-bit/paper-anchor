@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 
 from app import settings_store
 from app.errors import AppError
-from app.services import backup
+from app.services import backup, restore
 from app.services.gdrive import build_auth_url, exchange_code, forget_access_token
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
@@ -44,6 +44,20 @@ async def trigger_backup_run(background_tasks: BackgroundTasks) -> dict:
     if backup.is_running():
         raise AppError("backup_running", "備份已在進行中", status=409)
     background_tasks.add_task(backup.run_backup)
+    return {"started": True}
+
+
+@router.post("/restore", status_code=202)
+async def trigger_restore(background_tasks: BackgroundTasks) -> dict:
+    """從 Drive 匯入還原（M13 D11）；未連接 400、已有備份/還原進行中 409 operation_running。
+
+    遠端無備份/格式不符等於還原執行時偵測，結果經 `status` 的 `last_restore` 回報。
+    """
+    if not settings_store.runtime("gdrive_refresh_token"):
+        raise AppError("not_connected", "尚未連接 Google Drive", status=400)
+    if backup.is_running():
+        raise AppError("operation_running", "已有備份或還原進行中", status=409)
+    background_tasks.add_task(restore.run_restore)
     return {"started": True}
 
 

@@ -916,3 +916,268 @@ async def list_annotations_scoped(
         params,
     )
     return [_row_to_dict(r) for r in rows]
+
+
+# ---------- restore 匯入（M13 D11 / T-RS-01）----------
+# 還原專用寫入：全部支援顯式 created_at/updated_at（保留備份端時間戳，不用 DB 預設），
+# 回傳新生 id 供關聯欄位 remap。annotations/glossary 的 chunk_id 一律 NULL——備份端舊
+# chunk_id 是真 FK，本機 chunks 由 ingest 全新重生，沿用必 FK violation（見 D11）。
+# 查詢面（判斷本地是否已存在對應列）複用既有 list_* / dump_table_rows，不另開函式。
+
+
+async def restore_insert_project(session: AsyncSession, *, name: str, created_at: str) -> int:
+    """插入專案（顯式 created_at），回傳新 id。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO projects (user_id, name, created_at)
+                VALUES (:uid, :name, :created_at)
+                RETURNING id
+                """
+            ),
+            {"uid": DEFAULT_USER_ID, "name": name, "created_at": created_at},
+        )
+    ).one()
+    await session.commit()
+    return int(row.id)
+
+
+async def restore_insert_document(
+    session: AsyncSession,
+    *,
+    project_id: int | None,
+    title: str,
+    filename: str,
+    file_path: str,
+    digest: dict | None,
+    token_usage: dict | None,
+    created_at: str,
+) -> int:
+    """插入還原文獻（status='uploaded'，待 ingest 推進），回傳新 id。
+
+    digest/token_usage 沿用 dump 值（digest 有值時 ingest 可 run_digest=False 省 LLM）。
+    """
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO documents
+                    (user_id, project_id, title, filename, file_path, status,
+                     digest, token_usage, created_at)
+                VALUES (:uid, :pid, :title, :filename, :file_path, 'uploaded',
+                        :digest, :token_usage, :created_at)
+                RETURNING id
+                """
+            ),
+            {
+                "uid": DEFAULT_USER_ID,
+                "pid": project_id,
+                "title": title,
+                "filename": filename,
+                "file_path": file_path,
+                "digest": json.dumps(digest) if digest is not None else None,
+                "token_usage": json.dumps(token_usage or {}),
+                "created_at": created_at,
+            },
+        )
+    ).one()
+    await session.commit()
+    return int(row.id)
+
+
+async def restore_insert_annotation(
+    session: AsyncSession,
+    *,
+    document_id: int,
+    type: str,
+    color: str,
+    page: int,
+    bbox_list: list,
+    selected_text: str,
+    note_text: str,
+    created_at: str,
+    updated_at: str,
+) -> int:
+    """插入還原標註（顯式時間戳，chunk_id 一律 NULL），回傳新 id。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO annotations
+                    (document_id, type, color, page, bbox_list, chunk_id,
+                     selected_text, note_text, created_at, updated_at)
+                VALUES (:document_id, :type, :color, :page, :bbox_list, NULL,
+                        :selected_text, :note_text, :created_at, :updated_at)
+                RETURNING id
+                """
+            ),
+            {
+                "document_id": document_id,
+                "type": type,
+                "color": color,
+                "page": page,
+                "bbox_list": json.dumps(bbox_list),
+                "selected_text": selected_text,
+                "note_text": note_text,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            },
+        )
+    ).one()
+    await session.commit()
+    return int(row.id)
+
+
+async def restore_overwrite_annotation(
+    session: AsyncSession,
+    annotation_id: int,
+    *,
+    note_text: str,
+    color: str,
+    selected_text: str,
+    updated_at: str,
+) -> None:
+    """備份較新時覆蓋既有標註的可編輯欄位 + 顯式 updated_at（D11 newer-wins）。"""
+    await session.execute(
+        text(
+            """
+            UPDATE annotations
+            SET note_text = :note_text, color = :color, selected_text = :selected_text,
+                updated_at = :updated_at
+            WHERE id = :id
+            """
+        ),
+        {
+            "id": annotation_id,
+            "note_text": note_text,
+            "color": color,
+            "selected_text": selected_text,
+            "updated_at": updated_at,
+        },
+    )
+    await session.commit()
+
+
+async def restore_insert_glossary_entry(
+    session: AsyncSession,
+    *,
+    document_id: int,
+    term: str,
+    translation: str,
+    target_lang: str,
+    page: int,
+    bbox_list: list,
+    notes: str,
+    created_at: str,
+) -> int:
+    """插入還原翻譯表條目（顯式 created_at，chunk_id 一律 NULL），回傳新 id。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO glossary_entries
+                    (document_id, term, translation, target_lang, page, bbox_list,
+                     chunk_id, notes, created_at)
+                VALUES (:document_id, :term, :translation, :target_lang, :page,
+                        :bbox_list, NULL, :notes, :created_at)
+                RETURNING id
+                """
+            ),
+            {
+                "document_id": document_id,
+                "term": term,
+                "translation": translation,
+                "target_lang": target_lang,
+                "page": page,
+                "bbox_list": json.dumps(bbox_list),
+                "notes": notes,
+                "created_at": created_at,
+            },
+        )
+    ).one()
+    await session.commit()
+    return int(row.id)
+
+
+async def restore_insert_conversation(
+    session: AsyncSession,
+    *,
+    scope: str,
+    document_id: int | None,
+    project_id: int | None,
+    title: str,
+    model: str | None,
+    created_at: str,
+) -> int:
+    """插入還原對話串（保留 model 與顯式 created_at），回傳新 id。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO conversations
+                    (scope, document_id, project_id, title, model, created_at)
+                VALUES (:scope, :document_id, :project_id, :title, :model, :created_at)
+                RETURNING id
+                """
+            ),
+            {
+                "scope": scope,
+                "document_id": document_id,
+                "project_id": project_id,
+                "title": title,
+                "model": model,
+                "created_at": created_at,
+            },
+        )
+    ).one()
+    await session.commit()
+    return int(row.id)
+
+
+async def restore_insert_message(
+    session: AsyncSession,
+    *,
+    conversation_id: int,
+    role: str,
+    content: str,
+    citations: list,
+    selection: dict | None,
+    token_usage: dict | None,
+    created_at: str,
+) -> int:
+    """插入還原訊息（citations 已由呼叫端 remap document_id，顯式 created_at），回傳新 id。"""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO messages
+                    (conversation_id, role, content, citations, selection, token_usage,
+                     created_at)
+                VALUES (:conversation_id, :role, :content, :citations,
+                        :selection, :token_usage, :created_at)
+                RETURNING id
+                """
+            ),
+            {
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+                "citations": json.dumps(citations or []),
+                "selection": json.dumps(selection) if selection is not None else None,
+                "token_usage": json.dumps(token_usage or {}),
+                "created_at": created_at,
+            },
+        )
+    ).one()
+    await session.commit()
+    return int(row.id)
+
+
+async def delete_chunks(session: AsyncSession, doc_id: int) -> None:
+    """清空某文獻的 chunks（還原修復 failed 文獻時先清殘塊再重嵌，見 D11）。"""
+    await session.execute(
+        text("DELETE FROM chunks WHERE document_id = :doc_id"),
+        {"doc_id": doc_id},
+    )
+    await session.commit()

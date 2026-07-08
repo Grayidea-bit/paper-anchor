@@ -102,8 +102,12 @@ def _extract_title(doc: fitz.Document) -> str:
         return meta_title[:300]
 
 
-async def ingest_document(doc_id: int) -> None:
-    """BackgroundTask 入口。狀態機：parsing → embedding → ready | failed。"""
+async def ingest_document(doc_id: int, run_digest: bool = True) -> None:
+    """BackgroundTask 入口。狀態機：parsing → embedding → ready | failed。
+
+    `run_digest=False` 時跳過導讀生成（M13 還原用：dump 已帶 digest 就沿用、省最貴的
+    LLM 呼叫，見 D11）。**預設 True，既有行為完全不變**（鐵律 1 相鄰，不影響引用鏈）。
+    """
     async with SessionLocal() as session:
         doc = await repo.get_document(session, doc_id)
         if doc is None:
@@ -125,4 +129,5 @@ async def ingest_document(doc_id: int) -> None:
             logger.exception("ingest failed: doc=%s", doc_id)
             await repo.set_document_status(session, doc_id, "failed", error_msg=str(e)[:500])
             return
-    await generate_digest(doc_id)
+    if run_digest:
+        await generate_digest(doc_id)

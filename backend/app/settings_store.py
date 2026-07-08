@@ -33,6 +33,8 @@ ALLOWED_KEYS = {
     "gdrive_refresh_token",  # OAuth refresh token（callback 取得後寫入；PUT 不開放）
     "backup_interval_hours",  # 定時備份間隔小時數（0＝關閉）
     "backup_last_run",  # 上次備份時間與結果摘要（服務層寫入；PUT 不開放）
+    # M13：從 Drive 匯入還原（D11）
+    "restore_last_run",  # 上次還原時間與結果摘要（服務層寫入；PUT 不開放）
 }
 SECRET_KEYS = {
     "llm_api_key",

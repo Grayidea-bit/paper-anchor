@@ -25,6 +25,8 @@ import asyncio
 import json
 import logging
 import shutil
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -160,18 +162,49 @@ BACKUP_FOLDER_NAME = "PaperAnchor Backup"
 # non-blocking 佔用：run_backup() 開頭見已鎖住就直接 return，不排隊等待。
 # asyncio.Lock.acquire() 在未鎖定時同步回傳（不經過事件迴圈讓出點），
 # 故「檢查未鎖 → async with 取得」之間不會被其他 task 插隊。
+# 一把服務層鎖，backup 與 restore（M13）共用——天然互斥（進行中觸發另一操作直接略過），
+# 常駐排程零改動即被同一把鎖擋下（見 D11）。`_operation` 標示當前進行的操作供 status 顯示。
 _lock = asyncio.Lock()
 _progress: dict[str, Any] | None = None
+_operation: str | None = None
 _last_run: dict[str, Any] | None = None
+_last_restore: dict[str, Any] | None = None
 
 
 def is_running() -> bool:
-    """是否有備份正在進行（router 層用來回 409 backup_running）。"""
+    """是否有備份或還原正在進行（router 層用來回 409）。"""
     return _lock.locked()
 
 
+@asynccontextmanager
+async def try_begin(operation: str) -> AsyncIterator[bool]:
+    """非阻塞取鎖：取得→`yield True`（呼叫者執行）；已被佔用→`yield False`（呼叫者略過）。
+
+    離開時釋放鎖並清除 `_operation`/`_progress`。backup 與 restore 共用此 helper 與同一把
+    鎖，天然互斥（見 D11）。取鎖同步完成（`asyncio.Lock` 未鎖定時 acquire 不讓出事件迴圈），
+    故「檢查未鎖 → 取得」之間不會被其他 task 插隊。
+    """
+    global _operation, _progress
+    if _lock.locked():
+        yield False
+        return
+    async with _lock:
+        _operation = operation
+        try:
+            yield True
+        finally:
+            _operation = None
+            _progress = None
+
+
+def set_progress(phase: str, current: int, total: int) -> None:
+    """設定當前操作進度（backup 與 restore 共用；階段名見 D10/D11）。"""
+    global _progress
+    _progress = {"phase": phase, "current": current, "total": total}
+
+
 def _last_run_or_persisted() -> dict[str, Any] | None:
-    """目前已知最新一次執行紀錄（不論成功或失敗）。
+    """目前已知最新一次備份紀錄（不論成功或失敗）。
 
     記憶體 `_last_run`（本次啟動內跑過的結果）優先；冷啟動時回落 `settings_store`
     持久化的 `backup_last_run`。供 `get_status()` 與排程模組
@@ -180,20 +213,29 @@ def _last_run_or_persisted() -> dict[str, Any] | None:
     return _last_run if _last_run is not None else settings_store.runtime("backup_last_run")
 
 
-async def get_status() -> dict[str, Any]:
-    """組出 `GET /api/backup/status` 回應（見 D10 / 02-architecture.md §5）。
+def _last_restore_or_persisted() -> dict[str, Any] | None:
+    """目前已知最新一次還原紀錄；記憶體優先、冷啟動回落 `restore_last_run`（M13 D11）。"""
+    return (
+        _last_restore if _last_restore is not None else settings_store.runtime("restore_last_run")
+    )
 
-    `last_run` 優先讀本次啟動後的記憶體結果；冷啟動（尚未跑過）時回落
-    `settings_store` 的 `backup_last_run` 持久化值。
+
+async def get_status() -> dict[str, Any]:
+    """組出 `GET /api/backup/status` 回應（見 D10/D11 / 02-architecture.md §5）。
+
+    `last_run`/`last_restore` 優先讀本次啟動後的記憶體結果；冷啟動（尚未跑過）時各自回落
+    `settings_store` 的 `backup_last_run`/`restore_last_run` 持久化值。`operation` 標示當前
+    進行中的操作（`"backup"`/`"restore"`/`None`）。
     """
     connected = bool(settings_store.runtime("gdrive_refresh_token"))
     interval_hours = settings_store.runtime("backup_interval_hours", 0) or 0
-    last_run = _last_run_or_persisted()
     return {
         "connected": connected,
         "running": is_running(),
+        "operation": _operation,
         "progress": _progress,
-        "last_run": last_run,
+        "last_run": _last_run_or_persisted(),
+        "last_restore": _last_restore_or_persisted(),
         "interval_hours": interval_hours,
     }
 
@@ -216,10 +258,10 @@ async def run_backup() -> None:
     不會上傳，遠端維持上次完整備份基準（D10「上傳順序」）；`_last_run` 記錄失敗
     原因並持久化，staging 一律清理。
     """
-    global _progress, _last_run
-    if _lock.locked():
-        return
-    async with _lock:
+    global _last_run
+    async with try_begin("backup") as acquired:
+        if not acquired:
+            return
         staging: Path | None = None
         try:
             root_id = await gdrive.ensure_folder(BACKUP_FOLDER_NAME)
@@ -246,10 +288,10 @@ async def run_backup() -> None:
                 pending_pdfs.append((name, file_path))
 
             total_pdfs = len(pending_pdfs)
-            _progress = {"phase": "pdfs", "current": 0, "total": total_pdfs}
+            set_progress("pdfs", 0, total_pdfs)
             for i, (name, file_path) in enumerate(pending_pdfs, start=1):
                 await gdrive.upload_file(pdfs_folder_id, name, file_path, "application/pdf")
-                _progress = {"phase": "pdfs", "current": i, "total": total_pdfs}
+                set_progress("pdfs", i, total_pdfs)
 
             staging = prepare_staging()
             counts = await export_db_dumps(staging)
@@ -259,7 +301,7 @@ async def run_backup() -> None:
             remote_db_by_name = {f["name"]: f["id"] for f in remote_db_files}
 
             total_db = len(db_files)
-            _progress = {"phase": "db", "current": 0, "total": total_db}
+            set_progress("db", 0, total_db)
             for i, db_file in enumerate(db_files, start=1):
                 content = db_file.read_bytes()
                 name = db_file.name
@@ -267,12 +309,12 @@ async def run_backup() -> None:
                     await gdrive.update_file(remote_db_by_name[name], content, "application/json")
                 else:
                     await gdrive.upload_file(db_folder_id, name, content, "application/json")
-                _progress = {"phase": "db", "current": i, "total": total_db}
+                set_progress("db", i, total_db)
 
             manifest = await build_manifest(counts)
             manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
 
-            _progress = {"phase": "manifest", "current": 0, "total": 1}
+            set_progress("manifest", 0, 1)
             root_files = await gdrive.list_folder(root_id)
             manifest_entry = next((f for f in root_files if f["name"] == "manifest.json"), None)
             if manifest_entry:
@@ -281,7 +323,7 @@ async def run_backup() -> None:
                 await gdrive.upload_file(
                     root_id, "manifest.json", manifest_bytes, "application/json"
                 )
-            _progress = {"phase": "manifest", "current": 1, "total": 1}
+            set_progress("manifest", 1, 1)
 
             _last_run = {
                 "at": datetime.now(UTC).isoformat(),
@@ -298,6 +340,5 @@ async def run_backup() -> None:
             }
             await settings_store.update({"backup_last_run": _last_run})
         finally:
-            _progress = None
             if staging is not None:
                 cleanup_staging(staging)

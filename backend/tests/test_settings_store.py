@@ -55,7 +55,13 @@ class TestRouterModelCoverage:
 
     # claude_model：M9 改為每對話選模型後僅存唯讀回落（claude_backend.py），無寫入端點
     # gdrive_refresh_token / backup_last_run：M12 由 OAuth callback／備份服務層寫入，不開放 PUT
-    WRITE_EXEMPT = {"claude_model", "gdrive_refresh_token", "backup_last_run"}
+    # restore_last_run：M13 由還原服務層寫入，不開放 PUT（D11）
+    WRITE_EXEMPT = {
+        "claude_model",
+        "gdrive_refresh_token",
+        "backup_last_run",
+        "restore_last_run",
+    }
 
     def test_translation_target_lang_updatable(self):
         assert "translation_target_lang" in SettingsUpdate.model_fields

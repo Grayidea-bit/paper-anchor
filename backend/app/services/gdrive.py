@@ -400,6 +400,28 @@ async def update_file(file_id: str, content: bytes, mime: str) -> dict:
         return resp.json()
 
 
+async def download_file(file_id: str, dest_path: str | os.PathLike) -> None:
+    """下載 Drive 檔案內容（`GET files/{id}?alt=media`）分塊落地到 `dest_path`（M13 D11）。
+
+    走既有 `_authed`（429/5xx 指數退避、401 刷新後重試）。回應內容分塊寫檔，檔案 I/O
+    一律經 `asyncio.to_thread` 卸載、不阻塞事件迴圈（鏡像 `_file_stream` 的作法）。
+    """
+    dest = os.fspath(dest_path)
+    async with httpx.AsyncClient(timeout=_UPLOAD_TIMEOUT) as client:
+        resp = await _authed(client, "GET", f"{FILES_URL}/{file_id}", params={"alt": "media"})
+        _require_ok(resp, "下載檔案內容")
+        await _write_response_to_file(dest, resp)
+
+
+async def _write_response_to_file(path: str, resp: httpx.Response) -> None:
+    f = await asyncio.to_thread(open, path, "wb")
+    try:
+        for chunk in resp.iter_bytes(_UPLOAD_CHUNK):
+            await asyncio.to_thread(f.write, chunk)
+    finally:
+        await asyncio.to_thread(f.close)
+
+
 def _content_factory(content_or_path: bytes | str | os.PathLike) -> Any:
     """回傳每次呼叫都產生新 body 的工廠（支援重試時重建串流）。"""
     if isinstance(content_or_path, (bytes, bytearray)):
