@@ -74,11 +74,16 @@ def _as_json(value: Any) -> Any:
 
 
 def _parse_dt(value: Any) -> datetime | None:
-    """把 isoformat 時間字串解析成 aware UTC datetime；無法比較時回 None。
+    """把時間戳（isoformat 字串**或 datetime 物件**）正規化成 aware UTC datetime；不可比回 None。
 
-    容忍空格/`T` 分隔與 `Z` 結尾；naive 視為 UTC。跨機/跨 DB 的時區格式差異（如 `+08:00`
-    vs `+00:00`）正規化到同一瞬間，供 newer-wins 與身分簽章穩定比較。
+    比較點（conversations 身分簽章、annotations newer-wins）兩側來源不同：dump 端是 ISO
+    字串，本地端依 DB 驅動而異——asyncpg TIMESTAMPTZ 回 aware datetime、SQLite 回字串、
+    無 TZ 的 TIMESTAMP 可能 naive datetime，三種都須收斂到同一表示再比（T-RS-03 真
+    Postgres E2E 抓到「字串 vs datetime 不相等」的冪等破口）。字串容忍空格/`T` 分隔與
+    `Z` 結尾；naive 一律視為 UTC。
     """
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
     if not value or not isinstance(value, str):
         return None
     text = value.strip()
@@ -203,6 +208,7 @@ async def _merge_documents(
     await asyncio.to_thread(upload_dir.mkdir, parents=True, exist_ok=True)
 
     remap: dict[int, int] = {}
+    digest_fixups: list[tuple[int, dict]] = []
     for d in dump_docs:
         file_path = d.get("file_path") or ""
         uuid_name = Path(file_path).name
@@ -239,6 +245,15 @@ async def _merge_documents(
         remap[d["id"]] = new_id
         summary["documents_new"] += 1
         ingest_jobs.append((new_id, not digest, title))
+        if isinstance(digest, dict):
+            digest_fixups.append((new_id, digest))
+
+    # digest citations 的 document_id remap 需要**完整** remap 表（含自身與後續篇的新 id），
+    # 故等 documents 全部處理完再回寫；無變動（citations 不帶 document_id）就不多寫一次。
+    for new_id, digest in digest_fixups:
+        remapped = _remap_digest(digest, remap)
+        if remapped != digest:
+            await repo.restore_update_document_digest(session, new_id, remapped)
     return remap
 
 
@@ -351,6 +366,23 @@ def _remap_citations(citations: Any, doc_remap: dict[int, int]) -> list:
             nc["document_id"] = doc_remap.get(nc["document_id"])
         out.append(nc)
     return out
+
+
+def _remap_digest(digest: dict, doc_remap: dict[int, int]) -> dict:
+    """digest 各 section 的 citations 套用與 messages 相同的 document_id remap（查無→null）。
+
+    dump 的 digest 內 citations 若帶備份端舊 document_id，撞上本機另一篇的 id 會讓導讀
+    面板跳錯文獻——與 messages 路徑同一套 `_remap_citations` 語意收斂（T-RS-03 審查發現）。
+    """
+    sections = digest.get("sections")
+    if not isinstance(sections, list):
+        return digest
+    new_sections: list = []
+    for s in sections:
+        if isinstance(s, dict) and isinstance(s.get("citations"), list):
+            s = {**s, "citations": _remap_citations(s["citations"], doc_remap)}
+        new_sections.append(s)
+    return {**digest, "sections": new_sections}
 
 
 async def _merge_conversations(

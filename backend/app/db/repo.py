@@ -1,7 +1,7 @@
 """資料存取層：routers/services 不直接寫 SQL。"""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import bindparam, text
@@ -925,7 +925,22 @@ async def list_annotations_scoped(
 # 查詢面（判斷本地是否已存在對應列）複用既有 list_* / dump_table_rows，不另開函式。
 
 
-async def restore_insert_project(session: AsyncSession, *, name: str, created_at: str) -> int:
+def _coerce_ts(value: str | datetime) -> datetime:
+    """時間戳參數統一 coerce 成 aware datetime（介面對呼叫端寬容，收 ISO 字串或 datetime）。
+
+    asyncpg 對 TIMESTAMPTZ 參數只收 datetime 物件、拒收 ISO 字串（DataError；T-RS-03 真
+    Postgres E2E 發現，SQLite 測試環境不會攔到）。naive 一律視為 UTC；容忍 `Z` 結尾與
+    空格/`T` 分隔（`fromisoformat` 自 3.11 起兩者皆收）。
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+async def restore_insert_project(
+    session: AsyncSession, *, name: str, created_at: str | datetime
+) -> int:
     """插入專案（顯式 created_at），回傳新 id。"""
     row = (
         await session.execute(
@@ -936,7 +951,7 @@ async def restore_insert_project(session: AsyncSession, *, name: str, created_at
                 RETURNING id
                 """
             ),
-            {"uid": DEFAULT_USER_ID, "name": name, "created_at": created_at},
+            {"uid": DEFAULT_USER_ID, "name": name, "created_at": _coerce_ts(created_at)},
         )
     ).one()
     await session.commit()
@@ -952,7 +967,7 @@ async def restore_insert_document(
     file_path: str,
     digest: dict | None,
     token_usage: dict | None,
-    created_at: str,
+    created_at: str | datetime,
 ) -> int:
     """插入還原文獻（status='uploaded'，待 ingest 推進），回傳新 id。
 
@@ -978,12 +993,25 @@ async def restore_insert_document(
                 "file_path": file_path,
                 "digest": json.dumps(digest) if digest is not None else None,
                 "token_usage": json.dumps(token_usage or {}),
-                "created_at": created_at,
+                "created_at": _coerce_ts(created_at),
             },
         )
     ).one()
     await session.commit()
     return int(row.id)
+
+
+async def restore_update_document_digest(session: AsyncSession, doc_id: int, digest: dict) -> None:
+    """還原時回寫 remap 後的 digest（citations document_id 修正，見 D11）。
+
+    異於 `update_document_digest`：不追加 token_usage（dump 的 token_usage 已在
+    `restore_insert_document` 原樣寫入，這裡只修 digest 內容）。
+    """
+    await session.execute(
+        text("UPDATE documents SET digest = :digest WHERE id = :id"),
+        {"id": doc_id, "digest": json.dumps(digest)},
+    )
+    await session.commit()
 
 
 async def restore_insert_annotation(
@@ -996,8 +1024,8 @@ async def restore_insert_annotation(
     bbox_list: list,
     selected_text: str,
     note_text: str,
-    created_at: str,
-    updated_at: str,
+    created_at: str | datetime,
+    updated_at: str | datetime,
 ) -> int:
     """插入還原標註（顯式時間戳，chunk_id 一律 NULL），回傳新 id。"""
     row = (
@@ -1020,8 +1048,8 @@ async def restore_insert_annotation(
                 "bbox_list": json.dumps(bbox_list),
                 "selected_text": selected_text,
                 "note_text": note_text,
-                "created_at": created_at,
-                "updated_at": updated_at,
+                "created_at": _coerce_ts(created_at),
+                "updated_at": _coerce_ts(updated_at),
             },
         )
     ).one()
@@ -1036,7 +1064,7 @@ async def restore_overwrite_annotation(
     note_text: str,
     color: str,
     selected_text: str,
-    updated_at: str,
+    updated_at: str | datetime,
 ) -> None:
     """備份較新時覆蓋既有標註的可編輯欄位 + 顯式 updated_at（D11 newer-wins）。"""
     await session.execute(
@@ -1053,7 +1081,7 @@ async def restore_overwrite_annotation(
             "note_text": note_text,
             "color": color,
             "selected_text": selected_text,
-            "updated_at": updated_at,
+            "updated_at": _coerce_ts(updated_at),
         },
     )
     await session.commit()
@@ -1069,7 +1097,7 @@ async def restore_insert_glossary_entry(
     page: int,
     bbox_list: list,
     notes: str,
-    created_at: str,
+    created_at: str | datetime,
 ) -> int:
     """插入還原翻譯表條目（顯式 created_at，chunk_id 一律 NULL），回傳新 id。"""
     row = (
@@ -1092,7 +1120,7 @@ async def restore_insert_glossary_entry(
                 "page": page,
                 "bbox_list": json.dumps(bbox_list),
                 "notes": notes,
-                "created_at": created_at,
+                "created_at": _coerce_ts(created_at),
             },
         )
     ).one()
@@ -1108,7 +1136,7 @@ async def restore_insert_conversation(
     project_id: int | None,
     title: str,
     model: str | None,
-    created_at: str,
+    created_at: str | datetime,
 ) -> int:
     """插入還原對話串（保留 model 與顯式 created_at），回傳新 id。"""
     row = (
@@ -1127,7 +1155,7 @@ async def restore_insert_conversation(
                 "project_id": project_id,
                 "title": title,
                 "model": model,
-                "created_at": created_at,
+                "created_at": _coerce_ts(created_at),
             },
         )
     ).one()
@@ -1144,7 +1172,7 @@ async def restore_insert_message(
     citations: list,
     selection: dict | None,
     token_usage: dict | None,
-    created_at: str,
+    created_at: str | datetime,
 ) -> int:
     """插入還原訊息（citations 已由呼叫端 remap document_id，顯式 created_at），回傳新 id。"""
     row = (
@@ -1166,7 +1194,7 @@ async def restore_insert_message(
                 "citations": json.dumps(citations or []),
                 "selection": json.dumps(selection) if selection is not None else None,
                 "token_usage": json.dumps(token_usage or {}),
-                "created_at": created_at,
+                "created_at": _coerce_ts(created_at),
             },
         )
     ).one()

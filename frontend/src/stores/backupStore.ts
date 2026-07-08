@@ -57,6 +57,9 @@ export const useBackupStore = create<BackupState>((set, get) => ({
     try {
       await api.runBackup();
       await get().fetchStatus();
+      // 202 早於背景任務取鎖，fetchStatus 可能還看不到 running；
+      // 輪詢在 !running 時會自清，無條件啟動以消除競態
+      get().startPolling();
     } catch (err) {
       set({ error: (err as Error).message });
     }
@@ -67,6 +70,7 @@ export const useBackupStore = create<BackupState>((set, get) => ({
     try {
       await api.restoreBackup();
       await get().fetchStatus();
+      get().startPolling();
     } catch (err) {
       set({ error: (err as Error).message });
     }

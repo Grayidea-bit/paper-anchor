@@ -12,6 +12,7 @@ failed doc 修復路徑、download_file MockTransport（正常/429/401）。
 import json
 import os
 import time
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -19,6 +20,7 @@ import pytest
 from sqlalchemy import text
 
 from app import settings_store
+from app.db import repo
 from app.routers import backup as backup_router
 from app.services import backup, gdrive, restore
 
@@ -240,7 +242,9 @@ async def test_empty_db_full_restore(restore_env):
     assert len(env.ingest.calls) == 2
     assert all(run_digest is True for _, run_digest in env.ingest.calls)
 
-    # created_at 保留、id 全新（不等於 dump 端 id）
+    # created_at 保留（比較「同一瞬間」，不比字串——repo coerce 成 datetime 後各 DB 存法不同）、
+    # id 全新（不等於 dump 端 id）
+    expected_ts = restore._parse_dt(_TS)
     async with env.session_maker() as s:
         rows = (
             await s.execute(
@@ -250,11 +254,11 @@ async def test_empty_db_full_restore(restore_env):
     assert len(rows) == 2
     for row in rows:
         assert row.id not in (801, 802)
-        assert str(row.created_at) == _TS
+        assert restore._parse_dt(str(row.created_at)) == expected_ts
     proj_created = await _count(
         env.session_maker, "SELECT created_at FROM projects WHERE name = 'Proj A'"
     )
-    assert str(proj_created) == _TS
+    assert restore._parse_dt(str(proj_created)) == expected_ts
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +787,265 @@ async def test_download_file_retries_on_429(gdrive_transport, monkeypatch, tmp_p
     await gdrive.download_file("fid", dest)
     assert calls["n"] == 2
     assert dest.read_bytes() == b"AFTER-RETRY"
+
+
+# ---------------------------------------------------------------------------
+# 11. 時間戳型別收斂（T-RS-03 真 Postgres E2E 回歸：asyncpg DataError + 冪等破口）
+# ---------------------------------------------------------------------------
+
+
+class TestTimestampNormalization:
+    """SQLite 測試環境抓不到 asyncpg 型別問題，靠測試設計模擬：本地側 datetime 物件
+    （SQLAlchemy/asyncpg 回傳形式）、dump 側 ISO 字串，兩側必須收斂到同一瞬間再比。"""
+
+    def test_parse_dt_normalizes_all_input_forms(self):
+        expected = datetime(2026, 3, 1, tzinfo=UTC)
+        # 字串三形：T 分隔 / 空格分隔（str(datetime) 形式）/ Z 結尾
+        assert restore._parse_dt("2026-03-01T00:00:00+00:00") == expected
+        assert restore._parse_dt("2026-03-01 00:00:00+00:00") == expected
+        assert restore._parse_dt("2026-03-01T00:00:00Z") == expected
+        # datetime 三形：aware UTC / naive（視為 UTC）/ 非 UTC 時區（換算同一瞬間）
+        assert restore._parse_dt(datetime(2026, 3, 1, tzinfo=UTC)) == expected
+        assert restore._parse_dt(datetime(2026, 3, 1)) == expected
+        plus8 = datetime(2026, 3, 1, 8, tzinfo=timezone(timedelta(hours=8)))
+        assert restore._parse_dt(plus8) == expected
+        # microseconds 保留
+        micro = restore._parse_dt("2026-07-04T07:11:37.173945+00:00")
+        assert micro == datetime(2026, 7, 4, 7, 11, 37, 173945, tzinfo=UTC)
+        # 不可比 → None
+        assert restore._parse_dt(None) is None
+        assert restore._parse_dt("") is None
+        assert restore._parse_dt("not-a-date") is None
+        assert restore._parse_dt(12345) is None
+
+    def test_coerce_ts_returns_aware_datetime(self):
+        # 事故現場的實際值：含 microseconds + offset 的 ISO 字串
+        dt = repo._coerce_ts("2026-07-04T07:11:37.173945+00:00")
+        assert dt == datetime(2026, 7, 4, 7, 11, 37, 173945, tzinfo=UTC)
+        assert dt.tzinfo is not None
+        # Z 結尾與空格分隔
+        assert repo._coerce_ts("2026-03-01T00:00:00Z") == datetime(2026, 3, 1, tzinfo=UTC)
+        assert repo._coerce_ts("2026-03-01 00:00:00+00:00") == datetime(2026, 3, 1, tzinfo=UTC)
+        # naive 字串/datetime → 視為 UTC 的 aware datetime
+        assert repo._coerce_ts("2026-03-01T00:00:00").tzinfo is not None
+        assert repo._coerce_ts(datetime(2026, 3, 1)).tzinfo is not None
+        # aware datetime 直通
+        aware = datetime(2026, 3, 1, tzinfo=UTC)
+        assert repo._coerce_ts(aware) is aware
+
+    @pytest.mark.asyncio
+    async def test_repo_restore_inserts_accept_iso_strings(self, restore_env):
+        """Bug 1 回歸：repo restore_* 收 ISO 字串必須內部 coerce 後正常入庫。"""
+        env = restore_env
+        iso = "2026-07-04T07:11:37.173945+00:00"
+        async with env.session_maker() as s:
+            conv_id = await repo.restore_insert_conversation(
+                s,
+                scope="library",
+                document_id=None,
+                project_id=None,
+                title="t",
+                model=None,
+                created_at=iso,
+            )
+            msg_id = await repo.restore_insert_message(
+                s,
+                conversation_id=conv_id,
+                role="user",
+                content="hi",
+                citations=[],
+                selection=None,
+                token_usage={},
+                created_at=iso,
+            )
+        assert conv_id > 0 and msg_id > 0
+        async with env.session_maker() as s:
+            stored = (
+                await s.execute(
+                    text("SELECT created_at FROM conversations WHERE id = :id"), {"id": conv_id}
+                )
+            ).scalar()
+        assert restore._parse_dt(str(stored)) == restore._parse_dt(iso)
+
+    @pytest.mark.asyncio
+    async def test_conversation_signature_skips_when_local_returns_datetime(
+        self, restore_env, monkeypatch
+    ):
+        """Bug 2 回歸（同庫還原事故）：本地側回 datetime 物件（模擬 asyncpg TIMESTAMPTZ）、
+        dump 側 ISO 字串——同一瞬間的簽章必須匹配、整串跳過不重複插入。"""
+        env = restore_env
+        # 種本地文獻 + 對話（created_at 用空格分隔形式，模擬 DB 存放）
+        async with env.session_maker() as s:
+            doc_id = (
+                await s.execute(
+                    text(
+                        """
+                        INSERT INTO documents
+                            (user_id, title, filename, file_path, page_count, status)
+                        VALUES (1, 'Local', 'paper.pdf', '/data/uploads/uuidA.pdf', 3, 'ready')
+                        RETURNING id
+                        """
+                    )
+                )
+            ).scalar()
+            await s.execute(
+                text(
+                    """
+                    INSERT INTO conversations (document_id, scope, title, created_at)
+                    VALUES (:d, 'document', 'conv', '2026-03-01 00:00:00+00:00')
+                    """
+                ),
+                {"d": doc_id},
+            )
+            await s.commit()
+
+        # 包一層：list_conversations_scoped 回傳的 created_at 轉成 aware datetime 物件
+        orig_list = repo.list_conversations_scoped
+
+        async def _returns_datetime_rows(session, **kwargs):
+            rows = await orig_list(session, **kwargs)
+            for r in rows:
+                if isinstance(r["created_at"], str):
+                    r["created_at"] = datetime.fromisoformat(r["created_at"])
+            return rows
+
+        monkeypatch.setattr(repo, "list_conversations_scoped", _returns_datetime_rows)
+
+        dumps = _empty_dumps()
+        dumps["documents"] = [_doc(801, file_path="/data/uploads/uuidA.pdf")]
+        dumps["conversations"] = [
+            {
+                "id": 501,
+                "scope": "document",
+                "document_id": 801,
+                "project_id": None,
+                "title": "conv",
+                "model": None,
+                "created_at": _TS,  # T 分隔 ISO 字串，同一瞬間
+            }
+        ]
+        dumps["messages"] = [
+            {
+                "id": 401,
+                "conversation_id": 501,
+                "role": "user",
+                "content": "hi",
+                "citations": [],
+                "selection": None,
+                "token_usage": {},
+                "created_at": _TS,
+            }
+        ]
+        await env.drive.push_backup(dumps=dumps, pdfs={})
+
+        await restore.run_restore()
+
+        summary = backup._last_restore["summary"]
+        assert summary["conversations_new"] == 0  # 簽章匹配 → 整串跳過
+        assert summary["messages_new"] == 0
+        assert await _count(env.session_maker, "SELECT COUNT(*) FROM conversations") == 1
+        assert await _count(env.session_maker, "SELECT COUNT(*) FROM messages") == 0
+
+    @pytest.mark.asyncio
+    async def test_annotation_local_newer_kept_when_local_returns_datetime(
+        self, restore_env, monkeypatch
+    ):
+        """newer-wins 回歸：本地側 updated_at 是 datetime 物件（模擬 asyncpg）且較新，
+        dump 側較舊字串 → 必須保留本地（修正前 datetime 被當不可比 → 備份一律覆蓋）。"""
+        env = restore_env
+        _, ann_id = await _seed_local_doc_with_annotation(
+            env.session_maker, uuid_name="uuidA.pdf", ann_updated_at="2026-06-01 00:00:00+00:00"
+        )
+
+        orig_list = repo.list_annotations
+
+        async def _returns_datetime_rows(session, document_id):
+            rows = await orig_list(session, document_id)
+            for r in rows:
+                for key in ("created_at", "updated_at"):
+                    if isinstance(r[key], str):
+                        r[key] = datetime.fromisoformat(r[key])
+            return rows
+
+        monkeypatch.setattr(repo, "list_annotations", _returns_datetime_rows)
+
+        dumps = _empty_dumps()
+        dumps["documents"] = [_doc(801, file_path="/data/uploads/uuidA.pdf")]
+        dumps["annotations"] = [_ann_dump(801, updated_at="2026-01-01T00:00:00+00:00")]
+        await env.drive.push_backup(dumps=dumps, pdfs={})
+
+        await restore.run_restore()
+
+        summary = backup._last_restore["summary"]
+        assert summary["annotations_updated"] == 0
+        assert summary["annotations_new"] == 0  # 簽章也必須匹配（不誤判為新標註）
+        async with env.session_maker() as s:
+            row = (
+                await s.execute(
+                    text("SELECT note_text FROM annotations WHERE id = :id"), {"id": ann_id}
+                )
+            ).one()
+        assert row.note_text == "old note"
+
+
+# ---------------------------------------------------------------------------
+# 12. digest citations 的 document_id remap（整合審查發現）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_digest_citations_document_id_remapped(restore_env):
+    """dump 的 digest citations 帶備份端舊 document_id → 入庫後須為新本機 id 或 null
+    （與 messages 的 _remap_citations 同一語意，防導讀面板跳錯文獻）。"""
+    env = restore_env
+    digest = {
+        "tldr": "summary",
+        "sections": [
+            {
+                "key": "method",
+                "title": "方法",
+                "text": "text",
+                "citations": [
+                    {
+                        "chunk_index": 1,
+                        "chunk_id": 55,
+                        "page": 2,
+                        "bbox_list": [[0, 0, 1, 1]],
+                        "document_id": 801,  # 自身舊 id → 應 remap 成新 id
+                    },
+                    {
+                        "chunk_index": 2,
+                        "chunk_id": 66,
+                        "page": 3,
+                        "bbox_list": [[0, 0, 2, 2]],
+                        "document_id": 424242,  # 查無 → null
+                    },
+                ],
+            }
+        ],
+    }
+    dumps = _empty_dumps()
+    dumps["documents"] = [_doc(801, file_path="/data/uploads/uuidA.pdf", digest=digest)]
+    await env.drive.push_backup(dumps=dumps, pdfs={"uuidA.pdf": b"%PDF-A"})
+
+    await restore.run_restore()
+
+    assert backup._last_restore["ok"] is True
+    async with env.session_maker() as s:
+        row = (
+            await s.execute(
+                text("SELECT id, digest FROM documents WHERE file_path LIKE '%uuidA.pdf'")
+            )
+        ).one()
+    stored = json.loads(row.digest) if isinstance(row.digest, str) else row.digest
+    cits = stored["sections"][0]["citations"]
+    assert cits[0]["document_id"] == row.id  # 自身舊 id remap 成新 id
+    assert cits[0]["chunk_id"] == 55  # 其餘欄位原樣
+    assert cits[1]["document_id"] is None  # 查無 → null
+    assert cits[1]["chunk_id"] == 66
+    assert stored["tldr"] == "summary"
+    # dump 有 digest → 仍以 run_digest=False 觸發 ingest
+    assert dict(env.ingest.calls)[row.id] is False
 
 
 @pytest.mark.asyncio
