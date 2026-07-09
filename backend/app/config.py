@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     embed_api_key: str = ""
     embed_model: str = "nvidia/nv-embedqa-e5-v5"
     embed_dim: int = 1024
+    # M14：本地 embedding 模型檔快取目錄（fastembed，見 docs/02-architecture.md D12）
+    embed_cache_dir: str = "/data/models"
 
     database_url: str = "postgresql+asyncpg://paper:paper@localhost:5432/paper_reader"
 

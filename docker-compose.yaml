@@ -30,6 +30,7 @@ services:
     volumes:
       - ./backend:/app
       - uploads:/data/uploads
+      - models:/data/models
     depends_on:
       db:
         condition: service_healthy
@@ -53,4 +54,5 @@ services:
 volumes:
   pgdata:
   uploads:
+  models:
   web_node_modules:

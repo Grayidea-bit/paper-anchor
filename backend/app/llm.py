@@ -15,7 +15,7 @@ from collections import deque
 
 import httpx
 
-from app import settings_store
+from app import local_embed, settings_store
 from app.config import get_settings
 
 EMBED_BATCH_SIZE = 32
@@ -105,11 +105,43 @@ async def _embed(texts: list[str], input_type: str) -> list[list[float]]:
     return results
 
 
+def effective_embed_config() -> tuple[str, str, int]:
+    """embedding 來源單一真相（docs/02-architecture.md D12）。
+
+    回傳 `(source, model, dim)`，`source` 為 `"nim"` 或 `"local"`——反映實際生效
+    來源，而非 `.env` 原值。backup manifest、restore 模型相符判斷、healthz、前端
+    顯示一律共用本函式（不得各自重算）。
+
+    `embed_source` 設定三值：
+    - `"nim"`：強制 NIM（無 key 則明確報錯，不默默改用本地污染向量）。
+    - `"local"`：強制本地模型，忽略 NIM 設定。
+    - `"auto"`（預設）：有 `embed_api_key` 就用 NIM，否則落本地。
+    """
+    env = get_settings()
+    source = settings_store.runtime("embed_source", "auto")
+    if source == "nim":
+        if not env.embed_api_key:
+            raise LLMError("embed_source=nim 但未設定 embed_api_key")
+        return "nim", env.embed_model, env.embed_dim
+    if source == "local":
+        return "local", local_embed.LOCAL_EMBED_MODEL, local_embed.LOCAL_EMBED_DIM
+    # auto
+    if env.embed_api_key:
+        return "nim", env.embed_model, env.embed_dim
+    return "local", local_embed.LOCAL_EMBED_MODEL, local_embed.LOCAL_EMBED_DIM
+
+
 async def embed_passages(texts: list[str]) -> list[list[float]]:
+    source, _, _ = effective_embed_config()
+    if source == "local":
+        return await local_embed.embed_local(texts, "passage")
     return await _embed(texts, "passage")
 
 
 async def embed_query(text: str) -> list[float]:
+    source, _, _ = effective_embed_config()
+    if source == "local":
+        return (await local_embed.embed_local([text], "query"))[0]
     return (await _embed([text], "query"))[0]
 
 

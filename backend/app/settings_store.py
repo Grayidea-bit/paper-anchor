@@ -35,6 +35,8 @@ ALLOWED_KEYS = {
     "backup_last_run",  # 上次備份時間與結果摘要（服務層寫入；PUT 不開放）
     # M13：從 Drive 匯入還原（D11）
     "restore_last_run",  # 上次還原時間與結果摘要（服務層寫入；PUT 不開放）
+    # M14：本地 embedding 來源選擇（非 secret；embed 端點/key/模型仍走 .env，見 D12）
+    "embed_source",  # "auto" | "nim" | "local"
 }
 SECRET_KEYS = {
     "llm_api_key",

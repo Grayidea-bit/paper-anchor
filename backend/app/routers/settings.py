@@ -31,6 +31,8 @@ class SettingsUpdate(BaseModel):
     gdrive_client_id: str | None = Field(default=None, max_length=300)
     gdrive_client_secret: str | None = Field(default=None, max_length=300)
     backup_interval_hours: int | None = Field(default=None, ge=0, le=8760)
+    # M14：本地 embedding 來源選擇（僅來源執行期化，見 D12）
+    embed_source: str | None = Field(default=None, pattern=r"^(auto|nim|local)$")
 
 
 def _view() -> dict:
