@@ -47,6 +47,7 @@ const SECTION_DIRTY_KEYS: Record<NavKey, (keyof SettingsPatch)[]> = {
     "llm_chat_models",
     "chat_backend",
     "claude_oauth_token",
+    "embed_source",
   ],
   prompt: ["system_prompt_extra"],
   backup: ["gdrive_client_id", "gdrive_client_secret", "backup_interval_hours"],

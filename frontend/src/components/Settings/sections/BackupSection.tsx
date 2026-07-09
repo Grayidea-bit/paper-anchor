@@ -21,7 +21,7 @@ interface BackupSectionProps {
 /** 階段字串對映 i18n；operation 缺席（後端未部署 M13 擴充）時預設走 backup 分支 */
 function phaseLabel(
   t: ReturnType<typeof useT>,
-  operation: "backup" | "restore" | null | undefined,
+  operation: "backup" | "restore" | "reembed" | null | undefined,
   phase: string,
 ): string {
   if (operation === "restore") {

@@ -1,12 +1,15 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import styles from "../SettingsModal.module.css";
 import {
   CHAT_BACKEND_OPTIONS,
+  EMBED_SOURCE_OPTIONS,
   type ChatBackend,
+  type EmbedSource,
   type SettingsPatch,
   type SettingsView,
 } from "../../../api/client";
 import { useT } from "../../../i18n";
+import { useBackupStore } from "../../../stores/backupStore";
 
 interface LlmSectionProps {
   view: SettingsView | null;
@@ -15,8 +18,25 @@ interface LlmSectionProps {
   onClearClaudeToken: () => void | Promise<void>;
 }
 
+/** embed_source 選項 → i18n 標籤鍵（同 CHAT_BACKEND_OPTIONS 顯示先例） */
+const EMBED_SOURCE_LABEL_KEY: Record<
+  EmbedSource,
+  "settingsEmbedAuto" | "settingsEmbedNim" | "settingsEmbedLocal"
+> = {
+  auto: "settingsEmbedAuto",
+  nim: "settingsEmbedNim",
+  local: "settingsEmbedLocal",
+};
+
 export function LlmSection({ view, patch, setPatch, onClearClaudeToken }: LlmSectionProps) {
   const t = useT();
+  const [showReembedConfirm, setShowReembedConfirm] = useState(false);
+
+  // reembed 進度沿用 backup 服務層鎖（三方互斥，見 D12）：讀同一個 backupStore status，
+  // BackupSection 的進度條元件不可共用（分頁不同），故這裡自帶一條輕量進度顯示
+  const backupStatus = useBackupStore((s) => s.status);
+  const backupError = useBackupStore((s) => s.error);
+  const runReembedNow = useBackupStore((s) => s.runReembed);
 
   const field = (key: "llm_base_url" | "llm_chat_model") =>
     patch[key] !== undefined ? patch[key] : (view?.[key] ?? "");
@@ -28,7 +48,16 @@ export function LlmSection({ view, patch, setPatch, onClearClaudeToken }: LlmSec
       ? patch.llm_chat_models.join("\n")
       : (view?.llm_chat_models ?? []).join("\n");
 
+  const savedEmbedSource: EmbedSource = view?.embed_source ?? "auto";
+  const embedSource: EmbedSource = patch.embed_source ?? savedEmbedSource;
+  const embedSourceDirty = embedSource !== savedEmbedSource;
+
+  // 三方共用鎖（backup/restore/reembed，見 D12）：任一進行中即不可觸發重建
+  const reembedRunning = backupStatus?.running === true && backupStatus.operation === "reembed";
+  const canReembed = backupStatus?.running !== true;
+
   return (
+    <>
     <section className={styles.section}>
       <h3 className={styles.sectionTitle}>{t.settingsLlm}</h3>
       <div className={styles.segmented}>
@@ -92,7 +121,6 @@ export function LlmSection({ view, patch, setPatch, onClearClaudeToken }: LlmSec
               </button>
             )}
           </div>
-          <p className={styles.hint}>{t.settingsEmbedNote}</p>
         </>
       )}
 
@@ -124,5 +152,88 @@ export function LlmSection({ view, patch, setPatch, onClearClaudeToken }: LlmSec
         </>
       )}
     </section>
+
+    <section className={styles.section}>
+      <h3 className={styles.sectionTitle}>{t.settingsEmbedTitle}</h3>
+      <div className={styles.segmented}>
+        {EMBED_SOURCE_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            className={embedSource === o.value ? styles.segActive : styles.segBtn}
+            onClick={() => setPatch({ ...patch, embed_source: o.value })}
+          >
+            {t[EMBED_SOURCE_LABEL_KEY[o.value]]}
+          </button>
+        ))}
+      </div>
+      <p className={styles.hint}>{t.settingsEmbedNote}</p>
+
+      {embedSourceDirty && <p className={styles.restoreWarning}>{t.settingsEmbedSwitchWarning}</p>}
+
+      <button
+        className={styles.miniBtn}
+        style={{ marginTop: 12 }}
+        disabled={!canReembed}
+        onClick={() => setShowReembedConfirm(true)}
+      >
+        {t.settingsEmbedReembedBtn}
+      </button>
+
+      {reembedRunning && backupStatus?.progress && (
+        <div className={styles.progressWrap}>
+          <div className={styles.progressTrack}>
+            {backupStatus.progress.total > 0 ? (
+              <div
+                className={styles.progressFill}
+                style={{
+                  width: `${Math.min(100, (backupStatus.progress.current / backupStatus.progress.total) * 100)}%`,
+                }}
+              />
+            ) : (
+              <div className={styles.progressIndeterminate} />
+            )}
+          </div>
+          <p className={styles.hint}>
+            {t.settingsOperationReembed} · {backupStatus.progress.current}/{backupStatus.progress.total}
+          </p>
+        </div>
+      )}
+      {backupError && <p className={styles.error}>{backupError}</p>}
+    </section>
+
+    {showReembedConfirm && (
+      <div
+        className={styles.overlay}
+        onMouseDown={(e) => e.target === e.currentTarget && setShowReembedConfirm(false)}
+      >
+        <div
+          className={styles.confirmDialog}
+          role="dialog"
+          aria-label={t.settingsEmbedReembedConfirmTitle}
+        >
+          <p className={styles.confirmTitle}>{t.settingsEmbedReembedConfirmTitle}</p>
+          <ul className={styles.confirmList}>
+            <li>{t.settingsEmbedReembedConfirmPoint1}</li>
+            <li>{t.settingsEmbedReembedConfirmPoint2}</li>
+            <li>{t.settingsEmbedReembedConfirmPoint3}</li>
+          </ul>
+          <div className={styles.confirmActions}>
+            <button className={styles.miniBtn} onClick={() => setShowReembedConfirm(false)}>
+              {t.cancel}
+            </button>
+            <button
+              className={styles.saveBtn}
+              onClick={() => {
+                setShowReembedConfirm(false);
+                void runReembedNow();
+              }}
+            >
+              {t.settingsEmbedReembedConfirmOk}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

@@ -205,6 +205,17 @@ export const CLAUDE_MODELS: { value: string; label: string }[] = [
   { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
 ];
 
+/** embedding 來源三值語意（M14，見 D12）：auto＝有 embed key 用 NIM 否則本地；
+ * nim／local 強制指定。僅來源執行期化，端點/key/模型維持 .env。 */
+export type EmbedSource = "auto" | "nim" | "local";
+
+/** 選項陣列驅動（同 CHAT_BACKEND_OPTIONS 先例） */
+export const EMBED_SOURCE_OPTIONS: { value: EmbedSource }[] = [
+  { value: "auto" },
+  { value: "nim" },
+  { value: "local" },
+];
+
 export interface SettingsView {
   llm_base_url?: string;
   llm_chat_model?: string;
@@ -220,6 +231,8 @@ export interface SettingsView {
   gdrive_client_secret_set: boolean;
   /** 定時備份間隔小時數（0＝關閉） */
   backup_interval_hours?: number;
+  /** embedding 來源選擇（M14，見 D12；缺席時前端一律回退 "auto"） */
+  embed_source?: EmbedSource;
   defaults: {
     llm_base_url: string;
     llm_chat_model: string;
@@ -240,6 +253,7 @@ export interface SettingsPatch {
   gdrive_client_id?: string;
   gdrive_client_secret?: string;
   backup_interval_hours?: number;
+  embed_source?: EmbedSource;
 }
 
 export interface ToolInfo {
@@ -596,8 +610,8 @@ export interface BackupLastRestore {
 export interface BackupStatus {
   connected: boolean;
   running: boolean;
-  /** M13 新增（見 D11）：後端未部署時可能缺席，前端一律容錯回退成 backup */
-  operation?: "backup" | "restore" | null;
+  /** M13 新增（見 D11）／M14 加 "reembed"（見 D12）：後端未部署時可能缺席，前端一律容錯回退成 backup */
+  operation?: "backup" | "restore" | "reembed" | null;
   progress: BackupProgress | null;
   last_run: BackupLastRun | null;
   /** M13 新增：上次還原摘要，後端未部署時可能缺席 */
@@ -626,4 +640,13 @@ export function disconnectBackup(): Promise<void> {
 /** 202 {started: true}；已在跑（backup 或 restore）409 operation_running；未連接 400 not_connected（見 ApiError.code） */
 export function restoreBackup(): Promise<{ started: boolean }> {
   return request<{ started: boolean }>("/api/backup/restore", { method: "POST", ...JSON_POST });
+}
+
+// ---- maintenance（M14 / T-EM-02，見 D12 reembed 維護動作、§5） ----
+
+/** 全庫向量重建（切換 embed_source 後重嵌）。202 {started: true}；backup/restore/reembed
+ * 任一進行中 409 operation_running（見 ApiError.code）。進度沿用 /api/backup/status 輪詢
+ * （status.operation === "reembed"，見 BackupStatus）。 */
+export function reembedIndex(): Promise<{ started: boolean }> {
+  return request<{ started: boolean }>("/api/maintenance/reembed", { method: "POST", ...JSON_POST });
 }

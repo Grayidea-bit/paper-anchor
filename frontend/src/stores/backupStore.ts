@@ -11,6 +11,7 @@ export interface BackupState {
   fetchStatus: () => Promise<void>;
   runBackup: () => Promise<void>;
   runRestore: () => Promise<void>;
+  runReembed: () => Promise<void>;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   startPolling: () => void;
@@ -74,6 +75,18 @@ export const useBackupStore = create<BackupState>((set, get) => ({
     try {
       await api.restoreBackup();
       await get().fetchStatus();
+      get().startPolling();
+    } catch (err) {
+      set({ error: (err as Error).message });
+    }
+  },
+
+  runReembed: async () => {
+    set({ error: null });
+    try {
+      await api.reembedIndex();
+      await get().fetchStatus();
+      // 同 runBackup/runRestore：202 早於背景任務取鎖，無條件啟動輪詢消除競態
       get().startPolling();
     } catch (err) {
       set({ error: (err as Error).message });
