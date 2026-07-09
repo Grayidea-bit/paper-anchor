@@ -13,8 +13,27 @@ import pytest
 from sqlalchemy import text
 
 from app import settings_store
+from app.db import repo
 from app.routers import backup as backup_router
 from app.services import backup, gdrive
+
+
+async def _sqlite_dump_chunks(session, doc_id):
+    """SQLite 相容的 dump_chunks（真 dump_chunks 用 Postgres 專屬 `embedding::text`）。
+
+    裸讀 embedding 欄（SQLite 為 TEXT，測試資料未設向量故多為 NULL），供 run_backup 的
+    `export_chunk_dumps` 在 SQLite 測試層可跑（chunk 檔上傳編排驗證）；真向量 roundtrip
+    在 tests/pg 覆蓋。
+    """
+    rows = await session.execute(
+        text(
+            "SELECT id, chunk_index, page, section, content, bbox_list, embedding "
+            "FROM chunks WHERE document_id = :d ORDER BY chunk_index"
+        ),
+        {"d": doc_id},
+    )
+    return [dict(r._mapping) for r in rows]
+
 
 # ---------- 共用 fixture ----------
 
@@ -78,6 +97,9 @@ async def orchestration_db(conversations_messages_tables, monkeypatch):
     """
     session_maker, _ = conversations_messages_tables
     monkeypatch.setattr(backup, "SessionLocal", session_maker)
+    # dump_chunks 為 Postgres 專用（embedding::text）；SQLite 測試層以裸讀版取代，
+    # 讓 run_backup 的 export_chunk_dumps 可跑（見 D12 C，chunk 檔上傳編排驗證）。
+    monkeypatch.setattr(repo, "dump_chunks", _sqlite_dump_chunks)
     return session_maker
 
 
@@ -217,6 +239,46 @@ class TestRunBackupOrchestration:
         last_call = fake_gdrive.calls[-1]
         assert last_call[0] in ("upload", "update")
         assert last_call[2] == "manifest.json"
+
+    async def test_chunks_folder_ensured_and_chunk_file_uploaded(
+        self, orchestration_db, fake_gdrive, fake_settings_store
+    ):
+        """v2（D12 C）：chunks 資料夾被 ensure；每篇有 chunks 的文獻上傳一個 chunks/{uuid}.json。
+
+        conftest doc id=1（file_path `/tmp/test.pdf`）帶一個 chunk → chunks/test.json。
+        """
+        await backup.run_backup()
+
+        assert backup._last_run["ok"] is True
+        root_id = fake_gdrive._folder_ids[(backup.BACKUP_FOLDER_NAME, None)]
+        chunks_id = fake_gdrive._folder_ids[("chunks", root_id)]
+        # chunks 資料夾以 root 為 parent 被 ensure
+        assert ("ensure_folder", "chunks", root_id) in fake_gdrive.calls
+        # 新檔 → upload_file 到 chunks 資料夾
+        chunk_uploads = {c[2] for c in fake_gdrive.calls if c[0] == "upload" and c[1] == chunks_id}
+        assert chunk_uploads == {"test.json"}
+        # manifest 仍最後上傳
+        assert fake_gdrive.calls[-1][2] == "manifest.json"
+
+    async def test_existing_chunk_file_uses_update_file(
+        self, orchestration_db, fake_gdrive, fake_settings_store
+    ):
+        """遠端已有同名 chunk 檔 → 全量覆蓋走 update_file（同 db/*.json 策略）。"""
+        root_id = await fake_gdrive.ensure_folder(backup.BACKUP_FOLDER_NAME)
+        chunks_id = await fake_gdrive.ensure_folder("chunks", parent_id=root_id)
+        existing_id = fake_gdrive.seed_remote(chunks_id, "test.json")
+        fake_gdrive.calls.clear()
+
+        await backup.run_backup()
+
+        update_calls = [c for c in fake_gdrive.calls if c[0] == "update" and c[1] == existing_id]
+        assert len(update_calls) == 1
+        # 沒有對 test.json 走 upload（避免重複建檔）
+        assert not any(
+            c[0] == "upload" and c[1] == chunks_id and c[2] == "test.json"
+            for c in fake_gdrive.calls
+        )
+        assert backup._last_run["ok"] is True
 
     async def test_failure_aborts_before_manifest_and_cleans_staging(
         self, orchestration_db, fake_gdrive, fake_settings_store, tmp_path

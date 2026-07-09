@@ -157,7 +157,9 @@ async def _download_phase(staging: Path) -> tuple[dict[str, list[dict]], dict[st
         backup.set_progress("download", i, total)
 
     manifest = json.loads((staging / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("format_version") != backup.FORMAT_VERSION:
+    # v1／v2 皆可還原（D12 C）：v1 走現行下載 PDF 重跑 ingest；v2 的直灌／重嵌三路分派
+    # 留給 T-BK2-02。此刻只放寬版本檢查，避免 FORMAT_VERSION 升到 2 後「還原 v1」被打回。
+    if manifest.get("format_version") not in (1, 2):
         raise AppError(
             "unsupported_format",
             f"備份格式版本不支援：{manifest.get('format_version')}",

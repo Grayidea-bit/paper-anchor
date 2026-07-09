@@ -210,6 +210,42 @@ async def test_update_chunk_embeddings_batch_vector_cast_roundtrip(pg_db):
 
 
 # ---------------------------------------------------------------------------
+# 1c. dump_chunks（M14 T-BK2-01，備份格式 v2）：`embedding::text` 讀回 pgvector 字面字串，
+#     經 backup.vector_to_b64/b64_to_vector 往返後與原向量一致（float32 精度）；未嵌入
+#     （NULL embedding）的 chunk 照出、embedding 欄為 None。SQLite 無 vector 型別測不到。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dump_chunks_vector_roundtrip_and_null(pg_db):
+    session_maker, _ = pg_db
+    rng = random.Random(7)
+    vectors = [[rng.uniform(-1, 1) for _ in range(_EMBED_DIM)] for _ in range(3)]
+
+    async with session_maker() as session:
+        doc_id = await _insert_doc(session, file_path="/data/uploads/uuidX.pdf")
+        # 4 塊：前 3 塊填向量，第 4 塊留 NULL embedding（尚未嵌入）。
+        ids = await repo.insert_chunks(session, doc_id, _chunk_specs([0, 1, 2, 3]))
+        await repo.update_chunk_embeddings(session, ids[:3], vectors)
+
+        rows = await repo.dump_chunks(session, doc_id)
+
+    # ORDER BY chunk_index，欄位齊全
+    assert [r["chunk_index"] for r in rows] == [0, 1, 2, 3]
+    assert all(k in rows[0] for k in ("id", "page", "section", "content", "bbox_list", "embedding"))
+
+    # 前 3 塊：embedding 為 pgvector text 字面字串，b64 往返精度 < 1e-6
+    for r, vec in zip(rows[:3], vectors, strict=True):
+        assert isinstance(r["embedding"], str)
+        restored = backup.b64_to_vector(backup.vector_to_b64(r["embedding"]))
+        assert len(restored) == _EMBED_DIM
+        assert max(abs(a - b) for a, b in zip(vec, restored, strict=True)) < 1e-6
+
+    # 第 4 塊未嵌入 → embedding 欄為 None（照出，不漏塊）
+    assert rows[3]["embedding"] is None
+
+
+# ---------------------------------------------------------------------------
 # 2. total_token_usage：JSONB ->> / #>> 聚合（messages 逐則 + documents 導讀）
 # ---------------------------------------------------------------------------
 
