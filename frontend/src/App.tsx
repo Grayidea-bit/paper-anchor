@@ -60,7 +60,7 @@ export default function App() {
         </span>
       </header>
       <main className={styles.panes}>
-        <PDFPane />
+        <PDFPane key={documentId} />
         <RightPane />
       </main>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}

@@ -436,17 +436,30 @@ export function PDFPane() {
   // 頁碼膠囊：viewport 中線落在哪一頁
   const [currentPage, setCurrentPage] = useState(1);
   const paneRef = useRef<HTMLElement | null>(null);
+  // 節流：onScroll 原生事件觸發頻率遠高於畫面刷新率，querySelectorAll 全量掃描
+  // 每幀最多跑一次即可，其餘事件直接丟棄
+  const scrollRafRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    },
+    [],
+  );
   const onScroll = useCallback(() => {
-    const pane = paneRef.current;
-    if (!pane) return;
-    const mid = pane.getBoundingClientRect().top + pane.clientHeight / 2;
-    let best = 1;
-    for (const holder of pane.querySelectorAll<HTMLElement>("[data-page]")) {
-      const r = holder.getBoundingClientRect();
-      if (r.top <= mid) best = Number(holder.dataset.page) || best;
-      else break;
-    }
-    setCurrentPage(best);
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const pane = paneRef.current;
+      if (!pane) return;
+      const mid = pane.getBoundingClientRect().top + pane.clientHeight / 2;
+      let best = 1;
+      for (const holder of pane.querySelectorAll<HTMLElement>("[data-page]")) {
+        const r = holder.getBoundingClientRect();
+        if (r.top <= mid) best = Number(holder.dataset.page) || best;
+        else break;
+      }
+      setCurrentPage(best);
+    });
   }, []);
 
   if (documentId === null) {
@@ -663,27 +676,49 @@ function PageCanvas({
   const [scale, setScale] = useState<number | null>(null);
   const active = highlight?.page === pageNumber;
 
-  // 頁面虛擬化：進入可視範圍（±~1.5 頁）才渲染；引用跳轉的目標頁立即渲染
+  // 頁面虛擬化：進入可視範圍（±1600px）才渲染；離開夠遠（±3200px）才回收 canvas 釋放記憶體
+  // （中間留緩衝帶避免在邊界來回抖動）；引用跳轉的目標頁（active）強制常駐、永不回收。
   const [visible, setVisible] = useState(pageNumber <= 3);
+  // observer callback 是長壽命 closure（effect 只掛載一次），active 用 ref 讀最新值避免重建 observer
+  const activeRef = useRef(active);
   useEffect(() => {
-    if (visible) return;
+    activeRef.current = active;
+  }, [active]);
+  useEffect(() => {
     const holder = holderRef.current;
     if (!holder) return;
-    const observer = new IntersectionObserver(
+    const root = holder.closest("section");
+    const loadObserver = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setVisible(true);
-          observer.disconnect();
+        if (entries.some((e) => e.isIntersecting)) setVisible(true);
+      },
+      { root, rootMargin: "1600px 0px" },
+    );
+    const unloadObserver = new IntersectionObserver(
+      (entries) => {
+        if (!activeRef.current && entries.every((e) => !e.isIntersecting)) {
+          setVisible(false);
         }
       },
-      { root: holder.closest("section"), rootMargin: "1600px 0px" },
+      { root, rootMargin: "3200px 0px" },
     );
-    observer.observe(holder);
-    return () => observer.disconnect();
-  }, [visible]);
+    loadObserver.observe(holder);
+    unloadObserver.observe(holder);
+    return () => {
+      loadObserver.disconnect();
+      unloadObserver.disconnect();
+    };
+    // 只在掛載時建立一次：後續可視狀態變化全靠 observer 自身持續觀察，不必重建
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (active) setVisible(true);
   }, [active]);
+  // 回收：canvas/文字層一旦卸載，scale 也重置，讓 holder 改用 renderWidth 即時算出的
+  // 佔位尺寸（見下方 JSX），避免縮放時沿用舊尺寸造成版位跳動
+  useEffect(() => {
+    if (!visible) setScale(null);
+  }, [visible]);
 
   useEffect(() => {
     if (!visible) return;
@@ -785,8 +820,14 @@ function PageCanvas({
           : undefined
       }
     >
-      <canvas ref={canvasRef} />
-      <div className={styles.textLayer} ref={textRef} />
+      {/* visible=false 時整組卸載（不只是跳過繪製）：canvas 的點陣記憶體才會真的被瀏覽器回收；
+          holder 本身維持既有寬高（上方 style，或先前 render 時寫入的 inline style）撐住版位 */}
+      {visible && (
+        <>
+          <canvas ref={canvasRef} />
+          <div className={styles.textLayer} ref={textRef} />
+        </>
+      )}
       {/* 使用者標註層：靜態常駐、無動畫、pointer-events:none、z-index 低於 citation 高亮 */}
       {scale !== null && annotations.length > 0 && (
         <div className={styles.annotationLayer} aria-hidden="true">

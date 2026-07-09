@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Square, Languages } from "lucide-react";
@@ -97,6 +97,9 @@ type Attached = { text: string; chunkId: number | null };
 
 const CITATION_SPLIT = /(\[C\d+\])/g;
 
+/** 使用者停留在底部這個距離（px）內才視為「黏著」，自動跟隨串流捲動 */
+const STICK_THRESHOLD_PX = 120;
+
 function contextKey(ctx: ChatContext): string {
   if (ctx.kind === "document") return `doc-${ctx.documentId}`;
   if (ctx.kind === "project") return `project-${ctx.projectId}`;
@@ -138,6 +141,15 @@ function Chat({ context }: { context: ChatContext }) {
   const [llmChatModels, setLlmChatModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  /** 使用者是否在底部附近（<STICK_THRESHOLD_PX）：只有黏著時才自動跟隨捲動；
+   * 用 ref 而非 state，因為每次 scroll 都可能更新，不需要觸發重渲染 */
+  const stickToBottomRef = useRef(true);
+  /** 上一次量到的 scrollTop：用來判斷這次 scroll 事件是否「往上」。
+   * 本元件的自動捲動只會把 scrollTop 往下調（含被打斷的 smooth 動畫，中繼值也只會遞增，
+   * 絕不回退），所以 scrollTop 變小唯一成因是使用者主動往上捲——藉此避免用單純的
+   * 「離底部多遠」門檻去判斷時，被自己觸發但尚未跑完的動畫中繼值誤判成「使用者已離開底部」。 */
+  const prevScrollTopRef = useRef(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastFailedRef = useRef<{ question: string; selection: Attached | null } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -206,9 +218,30 @@ function Chat({ context }: { context: ChatContext }) {
     return () => clearInterval(timer);
   }, [digest, isDocument, context]);
 
+  // 黏著捲動：只有使用者停留在底部附近才自動跟隨。串流中用直接賦值 scrollTop（無動畫），
+  // 避免每個 token 都排一次 smooth 動畫互相打斷、堆疊；完成/切換對話時維持原本 smooth 行為。
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    if (streaming) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages, streaming]);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    if (el.scrollTop < prevScrollTopRef.current - 1) {
+      // scrollTop 變小＝使用者主動往上捲：立即脫離黏著（見 prevScrollTopRef 註解）
+      stickToBottomRef.current = false;
+    } else {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceFromBottom < STICK_THRESHOLD_PX) stickToBottomRef.current = true;
+    }
+    prevScrollTopRef.current = el.scrollTop;
+  }, []);
 
   // textarea 自動長高 + ChatGPT 式版型切換：
   // 單行 → 全部同列；換行（含 Shift+Enter 或軟換行）→ textarea 獨佔上列、控制項落下列。
@@ -391,6 +424,8 @@ function Chat({ context }: { context: ChatContext }) {
     setConvId(conv.id);
     setMessages([]);
     setSelectedModel(null);
+    stickToBottomRef.current = true;
+    prevScrollTopRef.current = 0;
   }, [context, streaming]);
 
   const modelOptions =
@@ -435,10 +470,12 @@ function Chat({ context }: { context: ChatContext }) {
    * 送 source_text 讓後端走舊的 LLM 萃取路徑。
    * glossaryStore.create 失敗時只 console.error 並吞掉例外（不 throw），
    * 故用建立前後的 entries 筆數變化判斷是否成功，藉此讓鈕恢復可重試。 */
+  /** 接收 (index, message) 而非只有 index：讓這個 callback 不必依賴整個 messages 陣列
+   * （否則每次任何訊息變動都會產生新的函式參照，害 MessageEntry 的 memo 失效）。
+   * target 由呼叫端（render 當下的該筆訊息）傳入，按鈕只在 !pending 時顯示，故內容已定案。 */
   const addAnswerToGlossary = useCallback(
-    async (index: number) => {
-      const target = messages[index];
-      const candidate = target?.glossaryCandidate;
+    async (index: number, target: LocalMessage) => {
+      const candidate = target.glossaryCandidate;
       if (!candidate) return;
       setMessages((prev) =>
         prev.map((m, i) => (i === index ? { ...m, glossaryStatus: "adding" } : m)),
@@ -461,7 +498,7 @@ function Chat({ context }: { context: ChatContext }) {
         ),
       );
     },
-    [messages, glossaryCreate],
+    [glossaryCreate],
   );
 
   return (
@@ -482,7 +519,7 @@ function Chat({ context }: { context: ChatContext }) {
           </button>
         </div>
       )}
-      <div className={styles.messages}>
+      <div className={styles.messages} ref={messagesRef} onScroll={handleMessagesScroll}>
         {isDocument && (
           <DigestCard
             digest={digest}
@@ -491,77 +528,13 @@ function Chat({ context }: { context: ChatContext }) {
           />
         )}
         {messages.map((m, i) => (
-          <div key={i} className={styles.entry}>
-            <span className={m.role === "user" ? styles.markerQ : styles.markerA}>
-              {m.role === "user" ? "Q" : "A"}
-            </span>
-            <div className={styles.entryBody}>
-              {m.role === "user" && m.selection?.text && (
-                <blockquote className={styles.selQuote}>
-                  {m.selection.text.length > 200
-                    ? `${m.selection.text.slice(0, 200)}…`
-                    : m.selection.text}
-                </blockquote>
-              )}
-              {m.role === "assistant" && m.thoughtSeconds != null && m.reasoning && (
-                <ThoughtToggle seconds={m.thoughtSeconds} reasoning={m.reasoning} />
-              )}
-              {m.role === "assistant" && m.toolEvents && m.toolEvents.length > 0 && (
-                <div className={styles.toolActivity}>
-                  {m.toolEvents.map((te, j) => {
-                    const [name, status] = te.split(":");
-                    return (
-                      <span key={j} className={styles.toolActivityItem} data-status={status}>
-                        {t.toolActivity(name)}
-                        {status === "done" ? " ✓" : status === "error" ? " ✗" : "…"}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-              {m.role === "assistant" ? (
-                <MarkdownWithCitations
-                  content={m.content}
-                  citations={m.citations}
-                  onCite={clickCitation}
-                />
-              ) : (
-                <PlainWithCitations
-                  content={m.content}
-                  citations={m.citations}
-                  onCite={clickCitation}
-                />
-              )}
-              {m.pending && m.content === "" && !m.stopped && (
-                <ThinkingCard startedAt={m.startedAt ?? Date.now()} reasoning={m.reasoning} />
-              )}
-              {m.stopped && <span className={styles.stoppedTag}>{t.generationStopped}</span>}
-              {m.role === "assistant" &&
-                !m.pending &&
-                !m.stopped &&
-                m.glossaryCandidate &&
-                m.glossaryStatus && (
-                  <button
-                    type="button"
-                    className={styles.addToGlossaryBtn}
-                    data-status={m.glossaryStatus}
-                    disabled={m.glossaryStatus === "adding" || m.glossaryStatus === "added"}
-                    onClick={() => void addAnswerToGlossary(i)}
-                  >
-                    {m.glossaryStatus === "added" ? (
-                      "✓"
-                    ) : (
-                      <Languages size={12} strokeWidth={2} />
-                    )}
-                    {m.glossaryStatus === "adding"
-                      ? t.translating
-                      : m.glossaryStatus === "added"
-                        ? t.addedToGlossary
-                        : t.addToGlossary}
-                  </button>
-                )}
-            </div>
-          </div>
+          <MessageEntry
+            key={i}
+            message={m}
+            index={i}
+            onCite={clickCitation}
+            onAddToGlossary={addAnswerToGlossary}
+          />
         ))}
         {error && (
           <div className={styles.error}>
@@ -655,6 +628,111 @@ function Chat({ context }: { context: ChatContext }) {
     </section>
   );
 }
+
+/** 比較兩則訊息「實際影響渲染」的欄位：串流中每個 token 只有最後一則訊息的這些欄位會變，
+ * 其餘訊息物件參照本身不變（patchLast 只 spread 最後一筆），下面 a===b 短路即可涵蓋多數情況；
+ * 保留欄位比對是為了防禦未來有人繞過 patchLast 用別的方式產生「內容相同但參照不同」的物件。 */
+function messageRenderEqual(a: LocalMessage, b: LocalMessage): boolean {
+  return (
+    a === b ||
+    (a.role === b.role &&
+      a.content === b.content &&
+      a.citations === b.citations &&
+      a.pending === b.pending &&
+      a.stopped === b.stopped &&
+      a.reasoning === b.reasoning &&
+      a.toolEvents === b.toolEvents &&
+      a.thoughtSeconds === b.thoughtSeconds &&
+      a.startedAt === b.startedAt &&
+      a.glossaryCandidate === b.glossaryCandidate &&
+      a.glossaryStatus === b.glossaryStatus &&
+      a.selection === b.selection)
+  );
+}
+
+interface MessageEntryProps {
+  message: LocalMessage;
+  index: number;
+  onCite: (label: number, citations: Citation[]) => void;
+  onAddToGlossary: (index: number, message: LocalMessage) => void;
+}
+
+/** 單則 Q/A 條目：React.memo + 自訂比較，串流中只有正在寫入的最後一則會重渲染，
+ * 其餘歷史訊息（含已渲染完成的 markdown）跳過重跑。 */
+const MessageEntry = memo(function MessageEntry({
+  message: m,
+  index: i,
+  onCite,
+  onAddToGlossary,
+}: MessageEntryProps) {
+  const t = useT();
+  return (
+    <div className={styles.entry}>
+      <span className={m.role === "user" ? styles.markerQ : styles.markerA}>
+        {m.role === "user" ? "Q" : "A"}
+      </span>
+      <div className={styles.entryBody}>
+        {m.role === "user" && m.selection?.text && (
+          <blockquote className={styles.selQuote}>
+            {m.selection.text.length > 200
+              ? `${m.selection.text.slice(0, 200)}…`
+              : m.selection.text}
+          </blockquote>
+        )}
+        {m.role === "assistant" && m.thoughtSeconds != null && m.reasoning && (
+          <ThoughtToggle seconds={m.thoughtSeconds} reasoning={m.reasoning} />
+        )}
+        {m.role === "assistant" && m.toolEvents && m.toolEvents.length > 0 && (
+          <div className={styles.toolActivity}>
+            {m.toolEvents.map((te, j) => {
+              const [name, status] = te.split(":");
+              return (
+                <span key={j} className={styles.toolActivityItem} data-status={status}>
+                  {t.toolActivity(name)}
+                  {status === "done" ? " ✓" : status === "error" ? " ✗" : "…"}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {m.role === "assistant" ? (
+          <MarkdownWithCitations content={m.content} citations={m.citations} onCite={onCite} />
+        ) : (
+          <PlainWithCitations content={m.content} citations={m.citations} onCite={onCite} />
+        )}
+        {m.pending && m.content === "" && !m.stopped && (
+          <ThinkingCard startedAt={m.startedAt ?? Date.now()} reasoning={m.reasoning} />
+        )}
+        {m.stopped && <span className={styles.stoppedTag}>{t.generationStopped}</span>}
+        {m.role === "assistant" &&
+          !m.pending &&
+          !m.stopped &&
+          m.glossaryCandidate &&
+          m.glossaryStatus && (
+            <button
+              type="button"
+              className={styles.addToGlossaryBtn}
+              data-status={m.glossaryStatus}
+              disabled={m.glossaryStatus === "adding" || m.glossaryStatus === "added"}
+              onClick={() => void onAddToGlossary(i, m)}
+            >
+              {m.glossaryStatus === "added" ? "✓" : <Languages size={12} strokeWidth={2} />}
+              {m.glossaryStatus === "adding"
+                ? t.translating
+                : m.glossaryStatus === "added"
+                  ? t.addedToGlossary
+                  : t.addToGlossary}
+            </button>
+          )}
+      </div>
+    </div>
+  );
+},
+(prev, next) =>
+  prev.index === next.index &&
+  prev.onCite === next.onCite &&
+  prev.onAddToGlossary === next.onAddToGlossary &&
+  messageRenderEqual(prev.message, next.message));
 
 /** 思考中卡片：計時 + 串流推理摘要（固定高度防跳動） */
 function ThinkingCard({ startedAt, reasoning }: { startedAt: number; reasoning?: string }) {
