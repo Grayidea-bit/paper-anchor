@@ -25,10 +25,12 @@ Prereqs: Docker (with compose) and an API key from [NVIDIA NIM](https://build.nv
 ```bash
 git clone https://github.com/<you>/paper-anchor && cd paper-anchor
 cp .env.example .env      # fill in LLM_API_KEY and EMBED_API_KEY
-docker compose up -d      # web :5173 / api :8000 / db :5432
+docker compose up -d      # web :5173 / api :8000 (both bound to 127.0.0.1)
 ```
 
 Open http://localhost:5173 and upload a PDF.
+
+Ports are bound to `127.0.0.1` (localhost only) by design — see [Deployment assumptions](#deployment-assumptions) before exposing anything to a network. The database port is not published to the host at all; the API reaches it over the Compose network.
 
 ### Swapping models / providers
 
@@ -107,9 +109,26 @@ docker compose exec api python -m scripts.eval_citations    # citation-integrity
 - **PDF stops rendering when the tab is in the background** — browsers pause `requestAnimationFrame` for hidden tabs; rendering resumes when the tab is visible again. Expected behavior.
 - **Scanned PDFs** — no text layer, no OCR support yet; upload fails with a clear message.
 
-## Security notes for public deployment
+## Deployment assumptions
 
-This is a single-user, local-first MVP. Before exposing it to the internet: add authentication, change the default DB credentials in `docker-compose.yaml`, and put the API behind TLS. See [docs/reviews/M4.md](docs/reviews/M4.md) for the full checklist.
+Paper Anchor is designed for a **single user on a trusted local machine**. Two assumptions are baked into the architecture — know them before you deploy:
+
+1. **No authentication; trust boundary is the network.** The API has no login. `docker compose` therefore binds the API (`:8000`) and web (`:5173`) ports to `127.0.0.1` only, and does **not** publish the database port to the host — the API reaches Postgres over the internal Compose network. Secrets (LLM key, Google OAuth tokens, etc.) live in the DB `settings` table and are masked by the API layer, so keeping the DB port off the host matters. State-changing `POST` endpoints without a request body carry a minimal CSRF guard: they require `Content-Type: application/json`, which a cross-site HTML form cannot set (it would trigger a CORS preflight that is not allowed). This is **not** a substitute for auth.
+2. **Single worker/process.** The backup/restore/reingest mutex locks and the `settings_store` cache are per-process, in-memory state. Do not run with multiple workers (`--workers N` or multiple replicas) — concurrency guarantees and runtime settings updates would silently break. The app logs a warning at startup if `WEB_CONCURRENCY > 1`.
+
+### Exposing it beyond localhost
+
+Before putting this on a LAN or the internet:
+
+- Put the API behind a **reverse proxy that adds authentication** (and TLS); do not open the raw ports. Prefer an SSH tunnel for occasional remote access (see the backup section above).
+- **Change the default DB password** (`paper`/`paper` in `docker-compose.yaml`). Note: changing it on an existing deployment requires re-initializing the `pgdata` volume, since the password is baked into the volume on first init — treat it as a fresh setup.
+- Keep it to a single worker.
+
+See [docs/reviews/M4.md](docs/reviews/M4.md) for the full checklist.
+
+### Connecting to the database directly
+
+The DB port is not published by default. To run `psql`/a GUI client against it, either use `docker compose exec db psql -U paper paper_reader`, or uncomment the `ports` block under the `db` service in `docker-compose.yaml` (bound to `127.0.0.1:5432`). The same uncomment is required to run the Postgres test layer from the host — see [backend/tests/README.md](backend/tests/README.md).
 
 ## License
 

@@ -1,10 +1,11 @@
 """翻譯表（glossary）CRUD 路由（T-TR-01）。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.db import repo
 from app.db.session import SessionLocal
+from app.deps import require_json_content_type
 from app.errors import NotFoundError
 from app.services import glossary as glossary_service
 
@@ -59,7 +60,7 @@ async def create_glossary_entry(document_id: int, body: GlossaryCreate) -> dict:
         )
 
 
-@router.post("/glossary/{entry_id}/retranslate")
+@router.post("/glossary/{entry_id}/retranslate", dependencies=[Depends(require_json_content_type)])
 async def retranslate_glossary_entry(entry_id: int) -> dict:
     """重打一次翻譯並更新該條目。"""
     async with SessionLocal() as session:

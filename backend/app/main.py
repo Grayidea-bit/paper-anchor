@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
@@ -30,8 +31,32 @@ from app.services.backup_scheduler import scheduler_loop
 logger = logging.getLogger(__name__)
 
 
+def _warn_if_multi_worker() -> None:
+    """多 worker 防呆（M15 T-FD-04）：偵測到 >1 worker 即記警告。
+
+    backup/restore/reingest 互斥鎖與 `settings_store` 設定快取皆為模組級（per-process）狀態，
+    不跨行程共享。多 worker 下併發互斥失效（可能同時跑兩份備份／還原）、設定更新只對接到請求
+    的那個 worker 生效。本系統設計為單 worker（見 docs/02-architecture.md 部署假設）。
+    輕量偵測：讀 gunicorn/uvicorn 慣用的 `WEB_CONCURRENCY` 環境變數。
+    """
+    raw = os.getenv("WEB_CONCURRENCY", "").strip()
+    try:
+        workers = int(raw) if raw else 1
+    except ValueError:
+        workers = 1
+    if workers > 1:
+        logger.warning(
+            "偵測到 WEB_CONCURRENCY=%s（多 worker）：backup/restore/reingest 互斥鎖與 "
+            "settings_store 快取為 per-process 狀態，多 worker 下併發互斥失效、設定更新只對單一 "
+            "worker 生效。本系統設計為單 worker，請勿以多 worker 啟動（見 docs/02-architecture.md "
+            "部署假設）。",
+            raw,
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _warn_if_multi_worker()
     try:
         await settings_store.ensure_loaded()
     except Exception:

@@ -171,6 +171,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/** 無 body 的 state-changing POST 需帶的 header/body：後端 `require_json_content_type`
+ * 防護（M15 T-FD-04）要求 `Content-Type: application/json`，否則回 400 `json_required`。
+ * 跨站表單 POST 無法設此 content-type（會觸發 CORS preflight 而被擋）→ CSRF 攻擊面關閉。 */
+const JSON_POST: RequestInit = {
+  headers: { "Content-Type": "application/json" },
+  body: "{}",
+};
+
 export function getHealth(): Promise<Health> {
   return request<Health>("/healthz");
 }
@@ -280,7 +288,7 @@ export function deleteDocument(id: number): Promise<void> {
 /** 重新解析文獻（M15 T-FD-01）：清舊 chunks 重跑 ingest → 202。
  * 文獻不存在 404；已在處理中或全域 backup/restore 進行中 409 operation_running（見 ApiError.code）。 */
 export function reingestDocument(id: number): Promise<Doc> {
-  return request<Doc>(`/api/documents/${id}/reingest`, { method: "POST" });
+  return request<Doc>(`/api/documents/${id}/reingest`, { method: "POST", ...JSON_POST });
 }
 
 export function getChunks(id: number, limit = 500): Promise<Chunk[]> {
@@ -382,7 +390,10 @@ export function listMessages(convId: number): Promise<Message[]> {
 
 export function regenerateDigest(docId: number, language?: string): Promise<{ status: string }> {
   const qs = language ? `?language=${encodeURIComponent(language)}` : "";
-  return request<{ status: string }>(`/api/documents/${docId}/digest${qs}`, { method: "POST" });
+  return request<{ status: string }>(`/api/documents/${docId}/digest${qs}`, {
+    method: "POST",
+    ...JSON_POST,
+  });
 }
 
 export interface ToolEvent {
@@ -541,10 +552,7 @@ export function createGlossaryEntry(
 }
 
 export function retranslateGlossaryEntry(id: number): Promise<GlossaryEntry> {
-  return request<GlossaryEntry>(`/api/glossary/${id}/retranslate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
+  return request<GlossaryEntry>(`/api/glossary/${id}/retranslate`, { method: "POST", ...JSON_POST });
 }
 
 export function deleteGlossaryEntry(id: number): Promise<void> {
@@ -603,7 +611,7 @@ export function getBackupStatus(): Promise<BackupStatus> {
 
 /** 202 {started: true}；已在跑 409 backup_running；未連接 400 not_connected（見 ApiError.code） */
 export function runBackup(): Promise<{ started: boolean }> {
-  return request<{ started: boolean }>("/api/backup/run", { method: "POST" });
+  return request<{ started: boolean }>("/api/backup/run", { method: "POST", ...JSON_POST });
 }
 
 /** 未設 gdrive_client_id 時 400 client_id_unset（見 ApiError.code） */
@@ -612,10 +620,10 @@ export function getBackupAuthUrl(): Promise<{ auth_url: string }> {
 }
 
 export function disconnectBackup(): Promise<void> {
-  return request<void>("/api/backup/auth/disconnect", { method: "POST" });
+  return request<void>("/api/backup/auth/disconnect", { method: "POST", ...JSON_POST });
 }
 
 /** 202 {started: true}；已在跑（backup 或 restore）409 operation_running；未連接 400 not_connected（見 ApiError.code） */
 export function restoreBackup(): Promise<{ started: boolean }> {
-  return request<{ started: boolean }>("/api/backup/restore", { method: "POST" });
+  return request<{ started: boolean }>("/api/backup/restore", { method: "POST", ...JSON_POST });
 }

@@ -606,8 +606,9 @@ async def test_409_mutual_exclusion(async_client, monkeypatch):
     monkeypatch.setattr(settings_store, "_cache", {"gdrive_refresh_token": "rtoken"})
     monkeypatch.setattr(backup, "is_running", lambda: True)
 
-    run_resp = await async_client.post("/api/backup/run")
-    restore_resp = await async_client.post("/api/backup/restore")
+    _ct = {"Content-Type": "application/json"}
+    run_resp = await async_client.post("/api/backup/run", headers=_ct)
+    restore_resp = await async_client.post("/api/backup/restore", headers=_ct)
 
     assert run_resp.status_code == 409
     assert restore_resp.status_code == 409
@@ -617,7 +618,9 @@ async def test_409_mutual_exclusion(async_client, monkeypatch):
 @pytest.mark.asyncio
 async def test_restore_not_connected_returns_400(async_client, monkeypatch):
     monkeypatch.setattr(settings_store, "_cache", {})
-    resp = await async_client.post("/api/backup/restore")
+    resp = await async_client.post(
+        "/api/backup/restore", headers={"Content-Type": "application/json"}
+    )
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "not_connected"
 
@@ -632,7 +635,9 @@ async def test_restore_returns_202_and_schedules(async_client, monkeypatch):
         called["n"] += 1
 
     monkeypatch.setattr(backup_router.restore, "run_restore", _noop)
-    resp = await async_client.post("/api/backup/restore")
+    resp = await async_client.post(
+        "/api/backup/restore", headers={"Content-Type": "application/json"}
+    )
     assert resp.status_code == 202
     assert resp.json() == {"started": True}
     assert called["n"] == 1

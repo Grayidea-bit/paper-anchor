@@ -3,13 +3,14 @@ from pathlib import Path
 
 import aiofiles
 from anyio import Path as AsyncPath
-from fastapi import APIRouter, BackgroundTasks, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.config import get_settings
 from app.db import repo
 from app.db.session import SessionLocal
+from app.deps import require_json_content_type
 from app.errors import AppError, NotFoundError
 from app.services import backup
 from app.services.digest import generate_digest
@@ -105,7 +106,7 @@ async def patch_document(doc_id: int, body: DocumentPatch) -> dict:
     return doc
 
 
-@router.post("/{doc_id}/digest", status_code=202)
+@router.post("/{doc_id}/digest", status_code=202, dependencies=[Depends(require_json_content_type)])
 async def regenerate_digest(
     doc_id: int, background_tasks: BackgroundTasks, language: str | None = None
 ) -> dict:
@@ -120,7 +121,9 @@ async def regenerate_digest(
     return {"status": "digesting"}
 
 
-@router.post("/{doc_id}/reingest", status_code=202)
+@router.post(
+    "/{doc_id}/reingest", status_code=202, dependencies=[Depends(require_json_content_type)]
+)
 async def reingest_document(doc_id: int, background_tasks: BackgroundTasks) -> dict:
     """重新解析文獻（M15 T-FD-01 / D4）：清舊 chunks 重跑 ingest_document。
 

@@ -25,10 +25,12 @@
 ```bash
 git clone https://github.com/<you>/paper-anchor && cd paper-anchor
 cp .env.example .env      # 填入 LLM_API_KEY 與 EMBED_API_KEY
-docker compose up -d      # web :5173 / api :8000 / db :5432
+docker compose up -d      # web :5173 / api :8000（皆綁定 127.0.0.1）
 ```
 
 打開 http://localhost:5173，上傳一篇 PDF 論文。
+
+對外埠預設只綁 `127.0.0.1`（僅本機）——對外開放前請先讀[部署假設](#部署假設)。資料庫埠預設完全不對主機公開，api 走 Compose 內網連 db。
 
 ### 換模型／換供應商
 
@@ -107,9 +109,24 @@ docker compose exec api python -m scripts.eval_citations    # 引用命中率回
 - **切到背景分頁後 PDF 停止渲染**——瀏覽器會暫停背景分頁的 requestAnimationFrame，切回即續跑，屬正常行為。
 - **掃描版 PDF**——無文字層，暫不支援 OCR，上傳會明確報錯。
 
-## 公開部署前的安全須知
+## 部署假設
 
-這是單人、本機優先的 MVP。要對外開放前：加上認證、更換 `docker-compose.yaml` 的預設資料庫密碼、在 API 前加 TLS。完整清單見 [docs/reviews/M4.md](docs/reviews/M4.md)。
+Paper Anchor 以**單機、單使用者、可信環境**為前提設計。兩條假設寫進了架構，部署前務必知悉：
+
+1. **無認證，信任邊界＝網路。** API 本身不做登入。因此 `docker compose` 把 api（`:8000`）與 web（`:5173`）埠**只綁 `127.0.0.1`**（僅本機），並**不對主機公開資料庫埠**——api 走 Compose 內網連 Postgres。秘密（LLM key、Google OAuth token 等）存於 DB `settings` 表、由 API 層遮罩，所以「不把 DB 埠開到主機」很重要。無 body 的 state-changing `POST` 端點加了最小 CSRF 防護：要求 `Content-Type: application/json`，而跨站 HTML 表單設不了此 content-type（會觸發不被允許的 CORS preflight）。這**不能**取代認證。
+2. **單一 worker／process。** backup/restore/reingest 的互斥鎖與 `settings_store` 快取皆為 per-process 的記憶體狀態。請勿以多 worker（`--workers N` 或多副本）啟動——併發互斥與執行期設定更新會靜默失效。啟動時若偵測到 `WEB_CONCURRENCY > 1` 會記警告日誌。
+
+### 要對外／區網開放時
+
+- 在 API 前放**能做認證的反向代理**（並加 TLS）；別直接開放裸埠。偶爾遠端存取建議走 SSH tunnel（見上方備份章節）。
+- **更換預設資料庫密碼**（`docker-compose.yaml` 的 `paper`/`paper`）。注意：既有部署改密碼需重建 `pgdata` volume（密碼在首次初始化時就寫進 volume）——當成全新安裝處理。
+- 維持單 worker。
+
+完整清單見 [docs/reviews/M4.md](docs/reviews/M4.md)。
+
+### 直連資料庫
+
+DB 埠預設不公開。要用 `psql`／GUI 連線，可用 `docker compose exec db psql -U paper paper_reader`，或把 `docker-compose.yaml` 中 `db` 服務下的 `ports` 區塊取消註解（綁 `127.0.0.1:5432`）。從主機跑 Postgres 測試層也需同樣取消註解——見 [backend/tests/README.md](backend/tests/README.md)。
 
 ## 授權
 

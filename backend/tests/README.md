@@ -38,10 +38,22 @@ function 防洗版、`CHECK` 約束、dump→restore 往返。
 
 ### 準備 Postgres
 
+pg 層預設連 `localhost:5432`（`TEST_DATABASE_URL` 預設值）。但為縮小暴露面（M15 T-FD-04），
+`docker-compose.yaml` 的 db 服務**預設不對主機公開 5432 埠**——api 走 Compose 內網連 db，
+主機平時無需直連。因此跑 pg 測試層前，需先讓 localhost:5432 可連：
+
 ```bash
-docker compose up -d db      # 只起 db 服務即可（不需 api/web）
+# 1. 取消註解 docker-compose.yaml 中 db 服務下的 ports 區塊（綁 127.0.0.1:5432）：
+#      ports:
+#        - "127.0.0.1:5432:5432"
+# 2. 起 db（只需 db，不需 api/web）
+docker compose up -d db
+# 3. 跑 pg 層
 py -m pytest -m pg -q
 ```
+
+（不想改 compose 也可用其他方式讓 localhost:5432 通，例如另跑一個對外的 pg 容器，或設
+`TEST_DATABASE_URL` 指向可連的實例。）跑完把 ports 區塊改回註解即可恢復預設不暴露狀態。
 
 測試庫（`paper_reader_test`）與開發庫（`paper_reader`）分離，pg 層每個 session 會重建它，
 不會污染開發資料。

@@ -7,10 +7,11 @@
 
 import html
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse
 
 from app import settings_store
+from app.deps import require_json_content_type
 from app.errors import AppError
 from app.services import backup, restore
 from app.services.gdrive import build_auth_url, exchange_code, forget_access_token
@@ -37,7 +38,7 @@ async def get_backup_status() -> dict:
     return await backup.get_status()
 
 
-@router.post("/run", status_code=202)
+@router.post("/run", status_code=202, dependencies=[Depends(require_json_content_type)])
 async def trigger_backup_run(background_tasks: BackgroundTasks) -> dict:
     if not settings_store.runtime("gdrive_refresh_token"):
         raise AppError("not_connected", "尚未連接 Google Drive", status=400)
@@ -47,7 +48,7 @@ async def trigger_backup_run(background_tasks: BackgroundTasks) -> dict:
     return {"started": True}
 
 
-@router.post("/restore", status_code=202)
+@router.post("/restore", status_code=202, dependencies=[Depends(require_json_content_type)])
 async def trigger_restore(background_tasks: BackgroundTasks) -> dict:
     """從 Drive 匯入還原（M13 D11）；未連接 400、已有備份/還原進行中 409 operation_running。
 
@@ -86,7 +87,7 @@ async def backup_auth_callback(
     return HTMLResponse(_CONNECTED_HTML)
 
 
-@router.post("/auth/disconnect", status_code=204)
+@router.post("/auth/disconnect", status_code=204, dependencies=[Depends(require_json_content_type)])
 async def disconnect_backup_auth() -> None:
     """中斷連接、清除 refresh token；不刪除遠端任何資料（D10 刪除語意）。"""
     await settings_store.update({"gdrive_refresh_token": ""})

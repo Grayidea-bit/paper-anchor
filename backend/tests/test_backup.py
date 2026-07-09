@@ -359,13 +359,17 @@ class TestRunEndpoint:
             called["n"] += 1
 
         monkeypatch.setattr(backup, "run_backup", _noop)
-        resp = await async_client.post("/api/backup/run")
+        resp = await async_client.post(
+            "/api/backup/run", headers={"Content-Type": "application/json"}
+        )
         assert resp.status_code == 202
         assert resp.json() == {"started": True}
         assert called["n"] == 1
 
     async def test_returns_400_when_not_connected(self, async_client, fake_settings_store):
-        resp = await async_client.post("/api/backup/run")
+        resp = await async_client.post(
+            "/api/backup/run", headers={"Content-Type": "application/json"}
+        )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "not_connected"
 
@@ -374,7 +378,9 @@ class TestRunEndpoint:
     ):
         fake_settings_store["gdrive_refresh_token"] = "rtoken"
         monkeypatch.setattr(backup, "is_running", lambda: True)
-        resp = await async_client.post("/api/backup/run")
+        resp = await async_client.post(
+            "/api/backup/run", headers={"Content-Type": "application/json"}
+        )
         assert resp.status_code == 409
         assert resp.json()["error"]["code"] == "backup_running"
 
@@ -451,7 +457,9 @@ class TestDisconnectEndpoint:
         fake_settings_store["gdrive_refresh_token"] = "rtoken"
         gdrive._access_token = "still-valid-access"  # 模擬記憶體中尚有效的 access token
         gdrive._access_expires_at = 9e9
-        resp = await async_client.post("/api/backup/auth/disconnect")
+        resp = await async_client.post(
+            "/api/backup/auth/disconnect", headers={"Content-Type": "application/json"}
+        )
         assert resp.status_code == 204
         assert "gdrive_refresh_token" not in fake_settings_store
         # 防禦縱深：disconnect 同時清除記憶體 access token 快取

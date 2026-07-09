@@ -417,7 +417,9 @@ async def test_router_delete_not_found(async_client):
 
 @pytest.mark.asyncio
 async def test_router_retranslate_not_found(async_client):
-    resp = await async_client.post("/api/glossary/999999/retranslate")
+    resp = await async_client.post(
+        "/api/glossary/999999/retranslate", headers={"Content-Type": "application/json"}
+    )
     assert resp.status_code == 404
 
 
@@ -432,7 +434,10 @@ async def test_router_retranslate_roundtrip(async_client, setup_test_document):
     entry_id = resp.json()["id"]
 
     with patch("app.services.glossary.chat", return_value=("第二版", {})):
-        resp = await async_client.post(f"/api/glossary/{entry_id}/retranslate")
+        resp = await async_client.post(
+            f"/api/glossary/{entry_id}/retranslate",
+            headers={"Content-Type": "application/json"},
+        )
     assert resp.status_code == 200
     assert resp.json()["translation"] == "第二版"
 

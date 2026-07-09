@@ -5,8 +5,11 @@ services:
       POSTGRES_USER: paper
       POSTGRES_PASSWORD: paper
       POSTGRES_DB: paper_reader
-    ports:
-      - "5432:5432"
+    # DB 埠預設不對外暴露（M15 T-FD-04）：api 走 compose 內網以主機名 `db` 連線，主機無需直連。
+    # 需從主機直連（psql / DBeaver）或跑 backend/tests/pg 的 Postgres 測試層時，取消下方註解，
+    # 讓 localhost:5432 可連（TEST_DATABASE_URL 預設連 localhost:5432）；平時保持註解，減少暴露面。
+    # ports:
+    #   - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,8 +23,10 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://paper:paper@db:5432/paper_reader
+    # 僅綁 127.0.0.1（M15 T-FD-04）：預設信任本機，不對區網暴露無認證 API。
+    # 對外/區網部署請改綁反向代理並自行加認證（見 README「部署假設」）。
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app
       - uploads:/data/uploads
@@ -35,8 +40,9 @@ services:
     working_dir: /app
     environment:
       API_PROXY_TARGET: http://api:8000
+    # 僅綁 127.0.0.1（M15 T-FD-04）：同上，對外部署請走反向代理。
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ./frontend:/app
       - web_node_modules:/app/node_modules
