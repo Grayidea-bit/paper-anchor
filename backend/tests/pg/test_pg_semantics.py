@@ -118,6 +118,98 @@ async def test_similar_chunks_multi_doc_row_number_anti_flooding(pg_db):
 
 
 # ---------------------------------------------------------------------------
+# 1b. insert_chunks / update_chunk_embeddings 批次化（M15 T-FD-06）：真 Postgres 下
+#     驗證多列 VALUES ... RETURNING 的順序保證，以及 executemany 批次 CAST(:emb AS
+#     vector) 逐筆對應正確（SQLite 版 CAST 到未知型別會全部歸零，測不到這段真行為）。
+# ---------------------------------------------------------------------------
+
+
+def _chunk_specs(chunk_indexes: list[int]) -> list[dict]:
+    return [
+        {
+            "chunk_index": idx,
+            "page": 1,
+            "section": None,
+            "content": f"c{idx}",
+            "bbox_list": [[0, idx, 10, idx + 5]],
+        }
+        for idx in chunk_indexes
+    ]
+
+
+@pytest.mark.asyncio
+async def test_insert_chunks_batch_returns_ids_matching_scrambled_input_order(pg_db):
+    """多列 VALUES INSERT ... RETURNING 的回傳 id 順序須對齊輸入 chunks 順序，即使
+    chunk_index 刻意打亂（不依賴 RETURNING 在 Postgres 上的實作序）。"""
+    session_maker, _ = pg_db
+    async with session_maker() as session:
+        doc_id = await _insert_doc(session)
+        specs = _chunk_specs([4, 1, 3, 0, 2])
+        ids = await repo.insert_chunks(session, doc_id, specs)
+
+        rows = (
+            await session.execute(
+                text("SELECT id, chunk_index, content FROM chunks WHERE document_id = :d"),
+                {"d": doc_id},
+            )
+        ).all()
+
+    by_id = {r.id: (r.chunk_index, r.content) for r in rows}
+    assert len(ids) == 5 == len(set(ids))
+    for returned_id, spec in zip(ids, specs, strict=True):
+        assert by_id[returned_id] == (spec["chunk_index"], spec["content"])
+
+
+@pytest.mark.asyncio
+async def test_insert_chunks_batches_over_500_on_real_postgres(pg_db):
+    """>500 chunk 觸發分批（_INSERT_CHUNKS_BATCH_SIZE=500），驗證真 Postgres 下多批
+    INSERT 仍收斂成正確、無缺漏、無重複的 id 對應。"""
+    session_maker, _ = pg_db
+    async with session_maker() as session:
+        doc_id = await _insert_doc(session)
+        specs = _chunk_specs(list(range(650)))
+        ids = await repo.insert_chunks(session, doc_id, specs)
+
+        count = (
+            await session.execute(
+                text("SELECT COUNT(*) FROM chunks WHERE document_id = :d"), {"d": doc_id}
+            )
+        ).scalar()
+
+    assert len(ids) == 650 == len(set(ids))
+    assert count == 650
+
+
+@pytest.mark.asyncio
+async def test_update_chunk_embeddings_batch_vector_cast_roundtrip(pg_db):
+    """executemany 批次更新在真 Postgres 上，CAST(:emb AS vector) 必須逐筆對應正確——
+    用 `<=>` 距離驗證每個 chunk 都拿到自己那組向量，而非彼此弄混或全部相同。"""
+    session_maker, _ = pg_db
+    rng = random.Random(3)
+    vectors = [[rng.uniform(-1, 1) for _ in range(_EMBED_DIM)] for _ in range(5)]
+
+    async with session_maker() as session:
+        doc_id = await _insert_doc(session)
+        ids = await _seed_chunks_with_vectors(session, doc_id, vectors)
+
+        for chunk_id, vec in zip(ids, vectors, strict=True):
+            hit = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT id FROM chunks
+                        WHERE document_id = :doc_id
+                        ORDER BY embedding <=> CAST(:emb AS vector)
+                        LIMIT 1
+                        """
+                    ),
+                    {"doc_id": doc_id, "emb": json.dumps(vec)},
+                )
+            ).scalar()
+            assert hit == chunk_id
+
+
+# ---------------------------------------------------------------------------
 # 2. total_token_usage：JSONB ->> / #>> 聚合（messages 逐則 + documents 導讀）
 # ---------------------------------------------------------------------------
 

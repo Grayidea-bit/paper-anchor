@@ -9,10 +9,11 @@
 對應列。與 backup **共用同一把服務層鎖**（`backup.try_begin`），天然互斥。
 
 實際 phase 順序（D11 語意為準，實作順序見下）：
-    download（manifest + db dumps）→ merge（projects → documents[含下載 PDF/insert，
-    收集 ingest 工作] → annotations → glossary → conversations+messages）→ ingest（逐篇
-    序列，n/m 進度）。文獻的 PDF 下載與 insert 併入 merge 的 documents 步驟先建好 id remap，
-    最耗時的重嵌集中在 merge 完成後的 ingest phase 慢慢跑並回報進度。
+    download（manifest + db dumps）→ download（新文獻 PDF，見 M15 T-FD-06：無 session
+    階段全部下載完才開 merge 的 session，避免數十秒的 Drive 網路 I/O 占住 DB pool 連線，
+    對照 run_backup 刻意短開 session 的慣例）→ merge（純 DB：projects → documents[insert
+    + remap] → annotations → glossary → conversations+messages）→ ingest（逐篇序列，
+    n/m 進度）。最耗時的重嵌集中在 merge 完成後的 ingest phase 慢慢跑並回報進度。
 """
 
 from __future__ import annotations
@@ -187,26 +188,65 @@ async def _merge_projects(session: AsyncSession, dump_projects: list[dict]) -> d
     return remap
 
 
+async def _download_new_document_pdfs(
+    dump_docs: list[dict],
+    remote_pdf_map: dict[str, str],
+) -> dict[str, dict]:
+    """無 session 階段：查本地既有文獻 UUID、下載新文獻的 PDF 到 upload_dir。
+
+    Drive PDF 下載一篇可能數十秒，過去併在 merge 的單一 DB session 內做，會白白占住
+    連線池數十秒（對照 `run_backup` 刻意短開 session 的慣例，見 M15 T-FD-06 審查發現）。
+    這裡先用一個短開的 session 讀本地文獻清單、關閉，再在無 session 狀態下逐一下載，
+    merge phase 開的 session 就只剩純 DB 寫入。
+
+    回傳 {uuid_name: local_document_dict}（本地既有文獻依 UUID 檔名索引），供
+    `_merge_documents` 直接判斷存在與否，不必在 merge session 內重查一次。
+    """
+    async with SessionLocal() as session:
+        local_docs = await repo.dump_table_rows(session, "documents")
+    local_by_uuid = {Path(d["file_path"]).name: d for d in local_docs if d.get("file_path")}
+
+    upload_dir = Path(get_settings().upload_dir)
+    await asyncio.to_thread(upload_dir.mkdir, parents=True, exist_ok=True)
+
+    pending: list[tuple[str, str]] = []
+    for d in dump_docs:
+        uuid_name = Path(d.get("file_path") or "").name
+        if uuid_name and uuid_name not in local_by_uuid and uuid_name in remote_pdf_map:
+            pending.append((uuid_name, remote_pdf_map[uuid_name]))
+
+    # 進度沿用既有 "download" phase 語意（下載階段，見 docs/02-architecture.md §5）：
+    # 使用者體感上這仍是「下載中」，只是這次下載的是新文獻 PDF 而非 manifest/db dump。
+    total = len(pending)
+    backup.set_progress("download", 0, total)
+    for i, (uuid_name, file_id) in enumerate(pending, start=1):
+        await gdrive.download_file(file_id, upload_dir / uuid_name)
+        backup.set_progress("download", i, total)
+
+    return local_by_uuid
+
+
 async def _merge_documents(
     session: AsyncSession,
     dump_docs: list[dict],
     project_remap: dict[int, int],
     remote_pdf_map: dict[str, str],
+    local_by_uuid: dict[str, dict],
     summary: dict[str, Any],
     ingest_jobs: list[tuple[int, bool, str]],
 ) -> dict[int, int]:
     """依 PDF UUID 檔名（file_path basename）簽章處理文獻，回傳 {dump_doc_id: local_id}。
 
-    - 已存在（UUID 命中本地）：remap，整篇跳過；本地 status 為 failed 或 transient 殘態
-      （parsing/embedding，程序中途被殺留下的半殘狀態，見 M15 T-FD-01）→ delete_chunks
-      後排入重嵌（重跑即修復，D11）。
-    - 不存在：遠端 pdfs/ 有對應檔才是新文獻——下載 PDF → restore_insert_document → 排入
-      ingest（run_digest = dump 無 digest）；遠端缺 PDF 整篇跳過記 documents_skipped。
+    純 DB 合併：PDF 已在 `_download_new_document_pdfs`（無 session 階段）下載完成，這裡
+    不再有網路 I/O，session 只做寫入。
+
+    - 已存在（UUID 命中本地，`local_by_uuid`）：remap，整篇跳過；本地 status 為 failed
+      或 transient 殘態（parsing/embedding，程序中途被殺留下的半殘狀態，見 M15 T-FD-01）
+      → delete_chunks 後排入重嵌（重跑即修復，D11）。
+    - 不存在：遠端 pdfs/ 有對應檔才是新文獻——PDF 已下載好 → restore_insert_document →
+      排入 ingest（run_digest = dump 無 digest）；遠端缺 PDF 整篇跳過記 documents_skipped。
     """
-    local_docs = await repo.dump_table_rows(session, "documents")
-    local_by_uuid = {Path(d["file_path"]).name: d for d in local_docs if d.get("file_path")}
     upload_dir = Path(get_settings().upload_dir)
-    await asyncio.to_thread(upload_dir.mkdir, parents=True, exist_ok=True)
 
     remap: dict[int, int] = {}
     digest_fixups: list[tuple[int, dict]] = []
@@ -232,7 +272,6 @@ async def _merge_documents(
             continue
 
         dest = upload_dir / uuid_name
-        await gdrive.download_file(remote_pdf_map[uuid_name], dest)
         dump_pid = d.get("project_id")
         new_id = await repo.restore_insert_document(
             session,
@@ -457,15 +496,26 @@ async def _merge_conversations(
 async def _merge_phase(
     dumps: dict[str, list[dict]],
     remote_pdf_map: dict[str, str],
+    local_by_uuid: dict[str, dict],
     summary: dict[str, Any],
 ) -> list[tuple[int, bool, str]]:
-    """在單一 session 內逐表合併，回傳待 ingest 的工作清單 (local_doc_id, run_digest, title)。"""
+    """在單一 session 內逐表合併，回傳待 ingest 的工作清單 (local_doc_id, run_digest, title)。
+
+    新文獻 PDF 已在呼叫前的 `_download_new_document_pdfs` 下載完畢（無 session 階段），
+    這裡的 session 全程只做 DB 寫入，不再被下載占住連線（M15 T-FD-06）。
+    """
     backup.set_progress("merge", 0, 1)
     ingest_jobs: list[tuple[int, bool, str]] = []
     async with SessionLocal() as session:
         project_remap = await _merge_projects(session, dumps["projects"])
         doc_remap = await _merge_documents(
-            session, dumps["documents"], project_remap, remote_pdf_map, summary, ingest_jobs
+            session,
+            dumps["documents"],
+            project_remap,
+            remote_pdf_map,
+            local_by_uuid,
+            summary,
+            ingest_jobs,
         )
         await _merge_annotations(session, dumps["annotations"], doc_remap, summary)
         await _merge_glossary(session, dumps["glossary_entries"], doc_remap, summary)
@@ -533,7 +583,8 @@ async def run_restore() -> None:
         summary = _empty_summary()
         try:
             dumps, remote_pdf_map = await _download_phase(staging)
-            ingest_jobs = await _merge_phase(dumps, remote_pdf_map, summary)
+            local_by_uuid = await _download_new_document_pdfs(dumps["documents"], remote_pdf_map)
+            ingest_jobs = await _merge_phase(dumps, remote_pdf_map, local_by_uuid, summary)
             await _ingest_phase(ingest_jobs, summary)
             await _record_result(ok=True, summary=summary)
         except Exception as exc:

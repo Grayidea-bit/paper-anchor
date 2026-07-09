@@ -208,42 +208,74 @@ async def delete_document(session: AsyncSession, doc_id: int) -> str | None:
 
 # ---------- chunks ----------
 
+# 一篇論文常見 300+ chunk；單條多列 INSERT 分批送出，防止單條 SQL 的綁定參數數量
+# 爆掉（Postgres 上限 65535 個；此處保守抓 500 列 * 6 欄 = 3000 個，兩邊 DB 都安全）。
+_INSERT_CHUNKS_BATCH_SIZE = 500
+
 
 async def insert_chunks(session: AsyncSession, doc_id: int, chunks: list[dict]) -> list[int]:
-    ids: list[int] = []
-    for c in chunks:
-        row = (
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO chunks (document_id, chunk_index, page, section, content, bbox_list)
-                    VALUES (:document_id, :chunk_index, :page, :section, :content, :bbox_list)
-                    RETURNING id
-                    """
-                ),
-                {
-                    "document_id": doc_id,
-                    "chunk_index": c["chunk_index"],
-                    "page": c["page"],
-                    "section": c.get("section"),
-                    "content": c["content"],
-                    "bbox_list": json.dumps(c["bbox_list"]),
-                },
+    """批次寫入 chunks（單條多列 INSERT ... VALUES ... RETURNING），取代逐列 INSERT。
+
+    一篇 300 chunk 的論文逐列 INSERT 是 300 次 round-trip；改多列 VALUES 一次送出，
+    大批次時每 `_INSERT_CHUNKS_BATCH_SIZE` 列分批（防參數上限）。RETURNING 順序在
+    Postgres 多列 VALUES 下實務對齊輸入序，但這裡不依賴該實作細節——改用 RETURNING
+    id, chunk_index 後在 Python 端依 chunk_index（UNIQUE(document_id, chunk_index)
+    保證唯一）重建對應輸入序的 id 清單，兩邊 DB 皆穩妥。空清單短路。
+    """
+    if not chunks:
+        return []
+
+    ids_by_chunk_index: dict[int, int] = {}
+    for batch_start in range(0, len(chunks), _INSERT_CHUNKS_BATCH_SIZE):
+        batch = chunks[batch_start : batch_start + _INSERT_CHUNKS_BATCH_SIZE]
+        values_clauses: list[str] = []
+        params: dict[str, Any] = {}
+        for i, c in enumerate(batch):
+            values_clauses.append(
+                f"(:document_id_{i}, :chunk_index_{i}, :page_{i}, :section_{i}, "
+                f":content_{i}, :bbox_list_{i})"
             )
-        ).one()
-        ids.append(row.id)
+            params[f"document_id_{i}"] = doc_id
+            params[f"chunk_index_{i}"] = c["chunk_index"]
+            params[f"page_{i}"] = c["page"]
+            params[f"section_{i}"] = c.get("section")
+            params[f"content_{i}"] = c["content"]
+            params[f"bbox_list_{i}"] = json.dumps(c["bbox_list"])
+
+        stmt = text(
+            f"""
+            INSERT INTO chunks (document_id, chunk_index, page, section, content, bbox_list)
+            VALUES {", ".join(values_clauses)}
+            RETURNING id, chunk_index
+            """
+        )
+        rows = (await session.execute(stmt, params)).all()
+        for row in rows:
+            ids_by_chunk_index[row.chunk_index] = row.id
+
     await session.commit()
-    return ids
+    return [ids_by_chunk_index[c["chunk_index"]] for c in chunks]
 
 
 async def update_chunk_embeddings(
     session: AsyncSession, chunk_ids: list[int], embeddings: list[list[float]]
 ) -> None:
-    for chunk_id, emb in zip(chunk_ids, embeddings, strict=True):
-        await session.execute(
-            text("UPDATE chunks SET embedding = CAST(:emb AS vector) WHERE id = :id"),
-            {"id": chunk_id, "emb": json.dumps(emb)},
-        )
+    """批次更新 chunk 向量：單條 UPDATE 語句 + executemany 參數清單（取代逐筆 UPDATE）。
+
+    `session.execute(stmt, [params, ...])`（list of dict）觸發 DBAPI 層 executemany，
+    SQLite 與 asyncpg 皆相容；asyncpg 會將整批 bind/execute 用一次協定往返送出，
+    把 300 次 round-trip 收斂成 1 次。筆數不符時沿用既有 zip(strict=True) 守護。
+    """
+    if not chunk_ids:
+        return
+    params = [
+        {"id": chunk_id, "emb": json.dumps(emb)}
+        for chunk_id, emb in zip(chunk_ids, embeddings, strict=True)
+    ]
+    await session.execute(
+        text("UPDATE chunks SET embedding = CAST(:emb AS vector) WHERE id = :id"),
+        params,
+    )
     await session.commit()
 
 
