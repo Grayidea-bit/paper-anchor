@@ -96,11 +96,13 @@ def no_tools(monkeypatch):
     monkeypatch.setattr(claude_backend.tools_pkg, "build_sdk_mcp_server", lambda deps, sink: None)
 
 
-async def collect(monkeypatch, messages, *, history=None, question="q", deps=DEPS, model=None):
+async def collect(
+    monkeypatch, messages, *, history=None, question="q", deps=DEPS, model=None, with_tools=True
+):
     monkeypatch.setattr(sdk, "query", _fake_query(messages))
     events = []
     async for event in claude_backend.stream_chat(
-        "sys", history or [], question, deps, model=model
+        "sys", history or [], question, deps, model=model, with_tools=with_tools
     ):
         events.append(event)
     return events
@@ -202,6 +204,50 @@ class TestContextChunksSideChannel:
         ]
         events = await collect(monkeypatch, messages)
         assert not [e for e in events if e["type"] == "context_chunks"]
+
+
+class TestWithToolsFalse:
+    """T-DG-01：with_tools=False（digest 情境）不建 MCP server（options 無 mcp server）。"""
+
+    async def test_skips_mcp_server_build(self, monkeypatch):
+        calls: list = []
+
+        def fake_build_sdk_mcp_server(deps, sink):
+            calls.append((deps, sink))
+            return None
+
+        monkeypatch.setattr(
+            claude_backend.tools_pkg, "build_sdk_mcp_server", fake_build_sdk_mcp_server
+        )
+        await collect(monkeypatch, [_result_message()], with_tools=False)
+        assert calls == []
+
+    async def test_options_have_no_mcp_fields(self, monkeypatch):
+        captured: dict = {}
+        real_build_options = claude_backend._build_options
+
+        def spy_build_options(system, server, env, model=None):
+            captured["server"] = server
+            return real_build_options(system, server, env, model)
+
+        monkeypatch.setattr(claude_backend, "_build_options", spy_build_options)
+        # 若 build_sdk_mcp_server 沒被略過會回真 server 物件（非 None）——用真函式驗證。
+        events = await collect(monkeypatch, [_result_message()], with_tools=False)
+        assert captured["server"] is None
+        assert [e["type"] for e in events] == ["usage"]
+
+    async def test_with_tools_true_still_builds_server(self, monkeypatch):
+        calls: list = []
+
+        def fake_build_sdk_mcp_server(deps, sink):
+            calls.append((deps, sink))
+            return None
+
+        monkeypatch.setattr(
+            claude_backend.tools_pkg, "build_sdk_mcp_server", fake_build_sdk_mcp_server
+        )
+        await collect(monkeypatch, [_result_message()], with_tools=True)
+        assert len(calls) == 1
 
 
 class TestBuildOptionsSecurity:

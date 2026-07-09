@@ -9,7 +9,8 @@ import logging
 
 from app.db import repo
 from app.db.session import SessionLocal
-from app.llm import chat, extract_json
+from app.llm import extract_json
+from app.services.agent import chat_once
 from app.services.rag import language_name, load_prompt
 
 logger = logging.getLogger(__name__)
@@ -59,13 +60,7 @@ async def generate_digest(doc_id: int, language: str | None = None) -> None:
                 lines.append("（注意：文獻過長，中段部分段落已省略）")
             for c in selected:
                 lines.append(f"[C{c['chunk_index']}] (p.{c['page']}) {c['content']}")
-            answer, usage = await chat(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": "\n".join(lines)},
-                ],
-                max_tokens=3000,
-            )
+            answer, usage = await chat_once(system, "\n".join(lines), max_tokens=3000)
             digest = _validate(extract_json(answer), chunks)
             await repo.update_document_digest(session, doc_id, digest, usage)
             logger.info("digest done: doc=%s tokens=%s", doc_id, usage)

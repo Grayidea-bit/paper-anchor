@@ -99,8 +99,14 @@ async def stream_chat(
     user_content: str,
     deps: ToolDeps,
     model: str | None = None,
+    *,
+    with_tools: bool = True,
 ) -> AsyncIterator[dict]:
-    """事件流：token* / reasoning* / tool* / context_chunks* → usage（最後一次）。"""
+    """事件流：token* / reasoning* / tool* / context_chunks* → usage（最後一次）。
+
+    with_tools=False：不建 MCP server（options 無 mcp_servers/allowed_tools），
+    與 agent.stream_chat 的 with_tools 語意一致（見 chat_once）。
+    """
     from claude_agent_sdk import (
         AssistantMessage,
         RateLimitEvent,
@@ -125,7 +131,7 @@ async def stream_chat(
     for attempt in range(_MAX_ATTEMPTS):
         sink: list = []
         _sink_var.set(sink)
-        server = tools_pkg.build_sdk_mcp_server(deps, sink)
+        server = tools_pkg.build_sdk_mcp_server(deps, sink) if with_tools else None
         options = _build_options(system, server, env, model)
         think = ThinkFilter()
         visible = False  # 已對外輸出 token → 不可重試
