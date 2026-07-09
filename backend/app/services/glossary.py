@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import settings_store
 from app.db import repo
-from app.llm import chat
+from app.services.agent import chat_once
 from app.services.rag import load_prompt
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,9 @@ async def _translate(term: str, context: str, target_lang: str) -> str:
         .replace("{context}", context)
         .replace("{target_lang}", target_lang)
     )
-    answer, _usage = await chat(
-        [{"role": "user", "content": prompt}],
-        max_tokens=300,
-    )
+    # 走 chat_backend 分派（M14 D12 發現事項收尾）：翻譯跟著使用者選的對話來源
+    # （NIM 或 Claude 訂閱），純 Claude 情境不再殘留 NIM chat 依賴。
+    answer, _usage = await chat_once("", prompt, max_tokens=300)
     return answer.strip()
 
 
@@ -69,10 +68,7 @@ async def _extract_from_source(term: str, source_text: str, target_lang: str) ->
         .replace("{target_lang}", target_lang)
         .replace("{source_text}", source_text)
     )
-    answer, _usage = await chat(
-        [{"role": "user", "content": prompt}],
-        max_tokens=500,
-    )
+    answer, _usage = await chat_once("", prompt, max_tokens=500)
     return _parse_extraction(answer)
 
 

@@ -24,7 +24,7 @@ async def test_create_entry_success(test_db, setup_test_document):
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
         with patch(
-            "app.services.glossary.chat",
+            "app.services.glossary.chat_once",
             return_value=("神經網路", {"prompt_tokens": 1, "completion_tokens": 1}),
         ):
             entry = await glossary_service.create_entry(
@@ -52,7 +52,7 @@ async def test_create_entry_with_source_text_parses_translation_and_notes(
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
         with patch(
-            "app.services.glossary.chat",
+            "app.services.glossary.chat_once",
             return_value=("譯文：神經網路\n註解：一種模仿生物神經系統結構的機器學習模型。", {}),
         ) as mock_chat:
             entry = await glossary_service.create_entry(
@@ -78,7 +78,7 @@ async def test_create_entry_with_source_text_malformed_output_degrades(
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
         with patch(
-            "app.services.glossary.chat",
+            "app.services.glossary.chat_once",
             return_value=("這是一段沒有照格式回覆的自由文字說明", {}),
         ):
             entry = await glossary_service.create_entry(
@@ -103,7 +103,7 @@ async def test_create_entry_with_source_text_llm_failure_degrades_both_empty(
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
         with patch(
-            "app.services.glossary.chat",
+            "app.services.glossary.chat_once",
             side_effect=RuntimeError("llm api down"),
         ):
             entry = await glossary_service.create_entry(
@@ -127,7 +127,7 @@ async def test_create_entry_without_source_text_notes_empty(test_db, setup_test_
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
         with patch(
-            "app.services.glossary.chat",
+            "app.services.glossary.chat_once",
             return_value=("神經網路", {}),
         ):
             entry = await glossary_service.create_entry(
@@ -150,7 +150,7 @@ async def test_create_entry_with_frontend_provided_translation_and_notes_skips_l
     session_maker, _ = test_db
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
-        with patch("app.services.glossary.chat") as mock_chat:
+        with patch("app.services.glossary.chat_once") as mock_chat:
             entry = await glossary_service.create_entry(
                 session,
                 doc_id,
@@ -174,7 +174,7 @@ async def test_create_entry_with_frontend_provided_translation_only_notes_empty(
     session_maker, _ = test_db
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
-        with patch("app.services.glossary.chat") as mock_chat:
+        with patch("app.services.glossary.chat_once") as mock_chat:
             entry = await glossary_service.create_entry(
                 session,
                 doc_id,
@@ -197,7 +197,7 @@ async def test_create_entry_with_frontend_provided_translation_empty_notes(
     session_maker, _ = test_db
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
-        with patch("app.services.glossary.chat") as mock_chat:
+        with patch("app.services.glossary.chat_once") as mock_chat:
             entry = await glossary_service.create_entry(
                 session,
                 doc_id,
@@ -220,7 +220,7 @@ async def test_create_entry_no_chunk_id(test_db, setup_test_document):
     doc_id, _ = setup_test_document
     async with session_maker() as session:
         with patch(
-            "app.services.glossary.chat",
+            "app.services.glossary.chat_once",
             return_value=("梯度下降", {}),
         ):
             entry = await glossary_service.create_entry(
@@ -241,7 +241,7 @@ async def test_create_entry_llm_failure_still_creates(test_db, setup_test_docume
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
         with patch(
-            "app.services.glossary.chat",
+            "app.services.glossary.chat_once",
             side_effect=RuntimeError("llm api down"),
         ):
             entry = await glossary_service.create_entry(
@@ -262,7 +262,7 @@ async def test_target_lang_falls_back_to_default(test_db, setup_test_document):
     session_maker, _ = test_db
     doc_id, _ = setup_test_document
     async with session_maker() as session:
-        with patch("app.services.glossary.chat", return_value=("x", {})):
+        with patch("app.services.glossary.chat_once", return_value=("x", {})):
             entry = await glossary_service.create_entry(
                 session, doc_id, term="loss", page=1, bbox_list=[[0, 0, 10, 10]]
             )
@@ -276,7 +276,7 @@ async def test_target_lang_uses_setting(test_db, setup_test_document, monkeypatc
     session_maker, _ = test_db
     doc_id, _ = setup_test_document
     async with session_maker() as session:
-        with patch("app.services.glossary.chat", return_value=("loss function", {})):
+        with patch("app.services.glossary.chat_once", return_value=("loss function", {})):
             entry = await glossary_service.create_entry(
                 session, doc_id, term="損失函數", page=1, bbox_list=[[0, 0, 10, 10]]
             )
@@ -292,7 +292,7 @@ async def test_retranslate_updates_translation(test_db, setup_test_document):
     session_maker, _ = test_db
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
-        with patch("app.services.glossary.chat", return_value=("舊譯文", {})):
+        with patch("app.services.glossary.chat_once", return_value=("舊譯文", {})):
             entry = await glossary_service.create_entry(
                 session,
                 doc_id,
@@ -301,7 +301,7 @@ async def test_retranslate_updates_translation(test_db, setup_test_document):
                 bbox_list=[[0, 0, 10, 10]],
                 chunk_id=chunk_id,
             )
-        with patch("app.services.glossary.chat", return_value=("新譯文", {})):
+        with patch("app.services.glossary.chat_once", return_value=("新譯文", {})):
             updated = await glossary_service.retranslate(session, entry["id"])
     assert updated["translation"] == "新譯文"
 
@@ -319,7 +319,7 @@ async def test_retranslate_llm_failure_keeps_old_translation(test_db, setup_test
     session_maker, _ = test_db
     doc_id, chunk_id = setup_test_document
     async with session_maker() as session:
-        with patch("app.services.glossary.chat", return_value=("原譯文", {})):
+        with patch("app.services.glossary.chat_once", return_value=("原譯文", {})):
             entry = await glossary_service.create_entry(
                 session,
                 doc_id,
@@ -328,7 +328,7 @@ async def test_retranslate_llm_failure_keeps_old_translation(test_db, setup_test
                 bbox_list=[[0, 0, 10, 10]],
                 chunk_id=chunk_id,
             )
-        with patch("app.services.glossary.chat", side_effect=RuntimeError("down")):
+        with patch("app.services.glossary.chat_once", side_effect=RuntimeError("down")):
             result = await glossary_service.retranslate(session, entry["id"])
     assert result["translation"] == "原譯文"
 
@@ -339,7 +339,7 @@ async def test_retranslate_llm_failure_keeps_old_translation(test_db, setup_test
 @pytest.mark.asyncio
 async def test_router_create_list_delete_roundtrip(async_client, setup_test_document):
     doc_id, chunk_id = setup_test_document
-    with patch("app.services.glossary.chat", return_value=("測試譯文", {})):
+    with patch("app.services.glossary.chat_once", return_value=("測試譯文", {})):
         resp = await async_client.post(
             f"/api/documents/{doc_id}/glossary",
             json={
@@ -372,7 +372,7 @@ async def test_router_create_with_source_text_extracts_notes(async_client, setup
     """帶 source_text 建立條目：譯文＋註解一起入庫並可經 GET 讀回。"""
     doc_id, chunk_id = setup_test_document
     with patch(
-        "app.services.glossary.chat",
+        "app.services.glossary.chat_once",
         return_value=("譯文：梯度下降\n註解：一種透過反覆調整參數最小化損失函數的最佳化方法。", {}),
     ):
         resp = await async_client.post(
@@ -426,14 +426,14 @@ async def test_router_retranslate_not_found(async_client):
 @pytest.mark.asyncio
 async def test_router_retranslate_roundtrip(async_client, setup_test_document):
     doc_id, chunk_id = setup_test_document
-    with patch("app.services.glossary.chat", return_value=("第一版", {})):
+    with patch("app.services.glossary.chat_once", return_value=("第一版", {})):
         resp = await async_client.post(
             f"/api/documents/{doc_id}/glossary",
             json={"term": "x", "page": 1, "bbox_list": [[0, 0, 10, 10]], "chunk_id": chunk_id},
         )
     entry_id = resp.json()["id"]
 
-    with patch("app.services.glossary.chat", return_value=("第二版", {})):
+    with patch("app.services.glossary.chat_once", return_value=("第二版", {})):
         resp = await async_client.post(
             f"/api/glossary/{entry_id}/retranslate",
             headers={"Content-Type": "application/json"},
@@ -458,7 +458,7 @@ async def test_router_create_with_frontend_translation_and_notes_no_llm_call(
 ):
     """POST 帶 translation+notes：直存，LLM 不被呼叫。"""
     doc_id, chunk_id = setup_test_document
-    with patch("app.services.glossary.chat") as mock_chat:
+    with patch("app.services.glossary.chat_once") as mock_chat:
         resp = await async_client.post(
             f"/api/documents/{doc_id}/glossary",
             json={
@@ -483,7 +483,7 @@ async def test_router_create_with_frontend_translation_only_notes_defaults_to_em
 ):
     """POST 帶 translation（不帶 notes）：translation 直存，notes 變空字串。"""
     doc_id, chunk_id = setup_test_document
-    with patch("app.services.glossary.chat") as mock_chat:
+    with patch("app.services.glossary.chat_once") as mock_chat:
         resp = await async_client.post(
             f"/api/documents/{doc_id}/glossary",
             json={
@@ -544,7 +544,7 @@ async def test_router_create_with_frontend_translation_notes_persists_and_reads_
 ):
     """POST 帶 translation+notes，GET 回來確認都保存。"""
     doc_id, chunk_id = setup_test_document
-    with patch("app.services.glossary.chat"):
+    with patch("app.services.glossary.chat_once"):
         resp = await async_client.post(
             f"/api/documents/{doc_id}/glossary",
             json={
