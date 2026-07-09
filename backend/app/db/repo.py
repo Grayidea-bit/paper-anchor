@@ -1115,8 +1115,15 @@ async def restore_insert_annotation(
     note_text: str,
     created_at: str | datetime,
     updated_at: str | datetime,
+    chunk_id: int | None = None,
 ) -> int:
-    """插入還原標註（顯式時間戳，chunk_id 一律 NULL），回傳新 id。"""
+    """插入還原標註（顯式時間戳），回傳新 id。
+
+    `chunk_id` 預設 `None`（v1 行為——無 chunk 檔可映射，見 D11）；備份格式 v2 的
+    直灌／重嵌路徑傳入 remap 後的新 chunk_id，標註↔chunk 關聯不再丟失（D12）。呼叫端須
+    先插入 chunks（同一還原 session 內，`_merge_documents` 先於 `_merge_annotations`），
+    FK 才有效。
+    """
     row = (
         await session.execute(
             text(
@@ -1124,7 +1131,7 @@ async def restore_insert_annotation(
                 INSERT INTO annotations
                     (document_id, type, color, page, bbox_list, chunk_id,
                      selected_text, note_text, created_at, updated_at)
-                VALUES (:document_id, :type, :color, :page, :bbox_list, NULL,
+                VALUES (:document_id, :type, :color, :page, :bbox_list, :chunk_id,
                         :selected_text, :note_text, :created_at, :updated_at)
                 RETURNING id
                 """
@@ -1135,6 +1142,7 @@ async def restore_insert_annotation(
                 "color": color,
                 "page": page,
                 "bbox_list": json.dumps(bbox_list),
+                "chunk_id": chunk_id,
                 "selected_text": selected_text,
                 "note_text": note_text,
                 "created_at": _coerce_ts(created_at),
@@ -1187,8 +1195,13 @@ async def restore_insert_glossary_entry(
     bbox_list: list,
     notes: str,
     created_at: str | datetime,
+    chunk_id: int | None = None,
 ) -> int:
-    """插入還原翻譯表條目（顯式 created_at，chunk_id 一律 NULL），回傳新 id。"""
+    """插入還原翻譯表條目（顯式 created_at），回傳新 id。
+
+    `chunk_id` 預設 `None`（v1 行為，見 D11）；備份格式 v2 直灌／重嵌路徑傳入 remap 後
+    的新 chunk_id（D12），FK 有效因 chunks 已於同 session 先插入。
+    """
     row = (
         await session.execute(
             text(
@@ -1197,7 +1210,7 @@ async def restore_insert_glossary_entry(
                     (document_id, term, translation, target_lang, page, bbox_list,
                      chunk_id, notes, created_at)
                 VALUES (:document_id, :term, :translation, :target_lang, :page,
-                        :bbox_list, NULL, :notes, :created_at)
+                        :bbox_list, :chunk_id, :notes, :created_at)
                 RETURNING id
                 """
             ),
@@ -1208,6 +1221,7 @@ async def restore_insert_glossary_entry(
                 "target_lang": target_lang,
                 "page": page,
                 "bbox_list": json.dumps(bbox_list),
+                "chunk_id": chunk_id,
                 "notes": notes,
                 "created_at": _coerce_ts(created_at),
             },

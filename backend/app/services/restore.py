@@ -9,11 +9,17 @@
 對應列。與 backup **共用同一把服務層鎖**（`backup.try_begin`），天然互斥。
 
 實際 phase 順序（D11 語意為準，實作順序見下）：
-    download（manifest + db dumps）→ download（新文獻 PDF，見 M15 T-FD-06：無 session
-    階段全部下載完才開 merge 的 session，避免數十秒的 Drive 網路 I/O 占住 DB pool 連線，
-    對照 run_backup 刻意短開 session 的慣例）→ merge（純 DB：projects → documents[insert
-    + remap] → annotations → glossary → conversations+messages）→ ingest（逐篇序列，
-    n/m 進度）。最耗時的重嵌集中在 merge 完成後的 ingest phase 慢慢跑並回報進度。
+    download（manifest + db dumps +（v2）chunks/ 檔）→ download（新文獻 PDF，見 M15
+    T-FD-06：無 session 階段全部下載完才開 merge 的 session，避免數十秒的 Drive 網路 I/O
+    占住 DB pool 連線，對照 run_backup 刻意短開 session 的慣例）→ merge（純 DB：projects →
+    documents[insert + remap +（v2）插 chunks 建 chunk_remap] → annotations → glossary →
+    conversations+messages）→ ingest（逐篇序列，n/m 進度）。
+
+備份格式 v2 的還原三路分派（D12 C）：ingest phase 對每篇依 chunk 檔有無與模型相符與否走
+    (a) 直灌（模型相符：base64 向量直寫，零 LLM 零解析）、(b) 重嵌（模型不符：content 已入庫，
+    僅重算向量，免重解析）、(c) 全重建（v1 或 chunk 檔缺失/損壞：現行下載 PDF 重跑 ingest）。
+    chunks 提前到 merge phase 插入（annotations/glossary 的 chunk_id remap 需要新 chunk id），
+    向量填充留 ingest phase。最耗時的重嵌/全重建集中在 ingest phase 慢慢跑並回報進度。
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -32,6 +39,7 @@ from app.config import get_settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.errors import AppError
+from app.llm import effective_embed_config, embed_passages
 from app.services import backup, gdrive
 from app.services.ingest import ingest_document
 
@@ -125,13 +133,160 @@ def _load_dump(staging: Path, name: str) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
+def _load_chunk_file(staging: Path, uuid: str) -> dict | None:
+    """讀 `staging/chunks/{uuid}.json`，回傳 `{embed_model, embed_dim, chunks:[...]}`。
+
+    缺失／壞 JSON／結構不符（非 dict 或 chunks 非 list）一律回 `None`——呼叫端據此回落
+    全重建路徑 (c)（D12 三路分派的 robustness fallback，不中止整輪）。
+    """
+    path = staging / "chunks" / f"{uuid}.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError, OSError):
+        logger.warning("restore: chunk 檔壞 JSON，回落全重建 uuid=%s", uuid)
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("chunks"), list):
+        logger.warning("restore: chunk 檔結構不符，回落全重建 uuid=%s", uuid)
+        return None
+    return data
+
+
+# ---------- 三路分派 job（D12 C）----------
+
+
+@dataclass
+class _IngestJob:
+    """一篇文獻的 ingest phase 待辦，`path` 決定三路分派其一：
+
+    - `"direct"`（直灌 a）：`chunk_ids`/`vectors` 已對齊且濾除 embedding 為 null 者，
+      ingest phase 只做 `update_chunk_embeddings` + 轉 ready，零 LLM 零解析。
+    - `"reembed"`（重嵌 b）：`chunk_ids`（全部新 chunk）+ `contents` 對齊，ingest phase
+      `embed_passages(contents)` 後 `update_chunk_embeddings` + 轉 ready，免重解析。
+    - `"full"`（全重建 c）：走現行 `ingest_document`（`run_digest` 沿用 dump 有無 digest）。
+    """
+
+    doc_id: int
+    title: str
+    path: str
+    run_digest: bool = True
+    chunk_ids: list[int] = field(default_factory=list)
+    vectors: list[list[float]] = field(default_factory=list)
+    contents: list[str] = field(default_factory=list)
+
+
+def _register_chunk_remap(
+    chunk_rows: list[dict], new_ids: list[int], chunk_remap: dict[int, int]
+) -> None:
+    """建 `old_chunk_id → new_chunk_id` 映射（依插入序 zip；chunk 檔舊 id 缺失則略過）。
+
+    old chunk id 為備份端 DB 主鍵（全庫唯一），故單一全域映射表跨文獻不衝突；供
+    annotations/glossary 的 chunk_id remap 查表（見 D12 chunk_id remap 規則）。
+    """
+    for c, nid in zip(chunk_rows, new_ids, strict=True):
+        old = c.get("id")
+        if old is not None:
+            chunk_remap[old] = nid
+
+
+async def _dispatch_chunks(
+    session: AsyncSession,
+    doc_id: int,
+    title: str,
+    staging: Path,
+    uuid: str,
+    format_version: int,
+    run_digest: bool,
+    chunk_remap: dict[int, int],
+) -> _IngestJob:
+    """merge phase 內對單篇文獻做三路分派：插 chunks（直灌／重嵌）+ 填 chunk_remap，回 job。
+
+    v1 或 chunk 檔缺失／損壞（含壞 base64）→ 回落全重建（不在此插 chunks，交 ingest phase
+    的 `ingest_document` 下載解析）。直灌／重嵌則於此插入 chunks 並把 document 轉 `embedding`
+    狀態（向量填充留 ingest phase，見 D12 狀態機）。
+    """
+    if format_version != 2:
+        return _IngestJob(doc_id=doc_id, title=title, path="full", run_digest=run_digest)
+
+    data = _load_chunk_file(staging, uuid)
+    if data is None or not data.get("chunks"):
+        return _IngestJob(doc_id=doc_id, title=title, path="full", run_digest=run_digest)
+
+    _, eff_model, eff_dim = effective_embed_config()
+    chunk_rows = data["chunks"]
+    matches = data.get("embed_model") == eff_model and data.get("embed_dim") == eff_dim
+
+    try:
+        to_insert = [
+            {
+                "chunk_index": c["chunk_index"],
+                "page": c["page"],
+                "section": c.get("section"),
+                "content": c["content"],
+                "bbox_list": _as_json(c.get("bbox_list")) or [],
+            }
+            for c in chunk_rows
+        ]
+        # chunk_index 重複（chunk 檔損壞）先擋下：進 insert_chunks 會撞 UNIQUE 且
+        # IntegrityError 會中止整輪 merge，這裡轉為回落全重建。
+        if len({c["chunk_index"] for c in to_insert}) != len(to_insert):
+            raise ValueError("chunk_index 重複")
+        # 直灌前先解碼全部向量（壞 base64 → 回落全重建，且未插入 chunk 不留半殘）。
+        decoded: list[list[float] | None] = (
+            [
+                backup.b64_to_vector(c["embedding"]) if c.get("embedding") is not None else None
+                for c in chunk_rows
+            ]
+            if matches
+            else []
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning("restore: chunk 檔內容異常（%s），回落全重建 doc=%s", exc, doc_id)
+        return _IngestJob(doc_id=doc_id, title=title, path="full", run_digest=run_digest)
+
+    new_ids = await repo.insert_chunks(session, doc_id, to_insert)
+    _register_chunk_remap(chunk_rows, new_ids, chunk_remap)
+    await repo.set_document_status(session, doc_id, "embedding")
+
+    if matches:
+        # (a) 直灌：僅保留 embedding 非 null 的 chunk 對應 (id, vector)。
+        embed_ids: list[int] = []
+        vectors: list[list[float]] = []
+        for nid, vec in zip(new_ids, decoded, strict=True):
+            if vec is not None:
+                embed_ids.append(nid)
+                vectors.append(vec)
+        return _IngestJob(
+            doc_id=doc_id, title=title, path="direct", chunk_ids=embed_ids, vectors=vectors
+        )
+
+    # (b) 重嵌：content 從 chunk 檔，向量於 ingest phase 重算。
+    return _IngestJob(
+        doc_id=doc_id,
+        title=title,
+        path="reembed",
+        chunk_ids=new_ids,
+        contents=[c["content"] for c in chunk_rows],
+    )
+
+
 # ---------- phase: download ----------
 
 
-async def _download_phase(staging: Path) -> tuple[dict[str, list[dict]], dict[str, str]]:
-    """定位遠端備份、下載 manifest 與 db dumps，回傳 (dumps, remote_pdf_map)。
+async def _download_phase(
+    staging: Path,
+) -> tuple[dict[str, list[dict]], dict[str, str], dict[str, Any]]:
+    """定位遠端備份、下載 manifest / db dumps /（v2）chunk 檔。
+
+    回傳 `(dumps, remote_pdf_map, manifest)`。
 
     遠端無 manifest → 400 no_backup；manifest.format_version 不符 → 400 unsupported_format。
+
+    manifest 先單獨下載並解析（才知版本與 chunk_files 清單），再把 db dumps 與 v2 的
+    `chunks/` 檔併入同一 download phase 的 total（進度沿用 `download` 語意，前端零改動，
+    見 D12）。chunk 檔落地 `staging/chunks/{uuid}.json`，供 merge/ingest 三路分派讀取。
+    v1 備份無 `chunk_files` → 不下載 chunks，維持現行下載 PDF 重跑 ingest 路徑。
     """
     backup.set_progress("download", 0, 1)
     root_id = await gdrive.ensure_folder(backup.BACKUP_FOLDER_NAME)
@@ -140,25 +295,10 @@ async def _download_phase(staging: Path) -> tuple[dict[str, list[dict]], dict[st
     if manifest_entry is None:
         raise AppError("no_backup", "遠端找不到備份（缺 manifest.json）", status=400)
 
-    db_id = await gdrive.ensure_folder("db", parent_id=root_id)
-    pdfs_id = await gdrive.ensure_folder("pdfs", parent_id=root_id)
-    db_by_name = {f["name"]: f["id"] for f in await gdrive.list_folder(db_id)}
-
-    downloads: list[tuple[str, Path]] = [(manifest_entry["id"], staging / "manifest.json")]
-    for table in _DUMP_TABLES:
-        name = f"{table}.json"
-        if name in db_by_name:
-            downloads.append((db_by_name[name], staging / "db" / name))
-
-    total = len(downloads)
-    backup.set_progress("download", 0, total)
-    for i, (file_id, dest) in enumerate(downloads, start=1):
-        await gdrive.download_file(file_id, dest)
-        backup.set_progress("download", i, total)
-
+    # manifest 先下載並解析：需其 format_version / chunk_files 才能決定要不要抓 chunks。
+    await gdrive.download_file(manifest_entry["id"], staging / "manifest.json")
     manifest = json.loads((staging / "manifest.json").read_text(encoding="utf-8"))
-    # v1／v2 皆可還原（D12 C）：v1 走現行下載 PDF 重跑 ingest；v2 的直灌／重嵌三路分派
-    # 留給 T-BK2-02。此刻只放寬版本檢查，避免 FORMAT_VERSION 升到 2 後「還原 v1」被打回。
+    # v1／v2 皆可還原（D12 C）：v1 走現行下載 PDF 重跑 ingest；v2 走直灌／重嵌三路分派。
     if manifest.get("format_version") not in (1, 2):
         raise AppError(
             "unsupported_format",
@@ -166,9 +306,36 @@ async def _download_phase(staging: Path) -> tuple[dict[str, list[dict]], dict[st
             status=400,
         )
 
+    db_id = await gdrive.ensure_folder("db", parent_id=root_id)
+    pdfs_id = await gdrive.ensure_folder("pdfs", parent_id=root_id)
+    db_by_name = {f["name"]: f["id"] for f in await gdrive.list_folder(db_id)}
+
+    downloads: list[tuple[str, Path]] = []
+    for table in _DUMP_TABLES:
+        name = f"{table}.json"
+        if name in db_by_name:
+            downloads.append((db_by_name[name], staging / "db" / name))
+
+    # v2：把 manifest.chunk_files 列的檔併入下載（缺對應遠端檔者略過——merge 端會回落全重建）。
+    chunk_files_meta = manifest.get("chunk_files") or []
+    if manifest.get("format_version") == 2 and chunk_files_meta:
+        chunks_id = await gdrive.ensure_folder("chunks", parent_id=root_id)
+        chunk_by_name = {f["name"]: f["id"] for f in await gdrive.list_folder(chunks_id)}
+        (staging / "chunks").mkdir(parents=True, exist_ok=True)
+        for cf in chunk_files_meta:
+            name = cf.get("name")
+            if name and name in chunk_by_name:
+                downloads.append((chunk_by_name[name], staging / "chunks" / name))
+
+    total = len(downloads)
+    backup.set_progress("download", 0, total)
+    for i, (file_id, dest) in enumerate(downloads, start=1):
+        await gdrive.download_file(file_id, dest)
+        backup.set_progress("download", i, total)
+
     dumps = {table: _load_dump(staging, f"{table}.json") for table in _DUMP_TABLES}
     remote_pdf_map = {f["name"]: f["id"] for f in await gdrive.list_folder(pdfs_id)}
-    return dumps, remote_pdf_map
+    return dumps, remote_pdf_map, manifest
 
 
 # ---------- phase: merge ----------
@@ -235,18 +402,22 @@ async def _merge_documents(
     remote_pdf_map: dict[str, str],
     local_by_uuid: dict[str, dict],
     summary: dict[str, Any],
-    ingest_jobs: list[tuple[int, bool, str]],
+    ingest_jobs: list[_IngestJob],
+    staging: Path,
+    format_version: int,
+    chunk_remap: dict[int, int],
 ) -> dict[int, int]:
     """依 PDF UUID 檔名（file_path basename）簽章處理文獻，回傳 {dump_doc_id: local_id}。
 
     純 DB 合併：PDF 已在 `_download_new_document_pdfs`（無 session 階段）下載完成，這裡
-    不再有網路 I/O，session 只做寫入。
+    不再有網路 I/O，session 只做寫入。v2 於此插入 chunks（annotations/glossary 的 chunk_id
+    remap 需要新 chunk id，見 D12）並依三路分派排 job；v1 沿用全重建（chunks 由 ingest 補）。
 
     - 已存在（UUID 命中本地，`local_by_uuid`）：remap，整篇跳過；本地 status 為 failed
       或 transient 殘態（parsing/embedding，程序中途被殺留下的半殘狀態，見 M15 T-FD-01）
-      → delete_chunks 後排入重嵌（重跑即修復，D11）。
+      → delete_chunks 後同樣走三路分派修復（相符即直灌，D12——比重跑 ingest 快）。
     - 不存在：遠端 pdfs/ 有對應檔才是新文獻——PDF 已下載好 → restore_insert_document →
-      排入 ingest（run_digest = dump 無 digest）；遠端缺 PDF 整篇跳過記 documents_skipped。
+      三路分派排 job；遠端缺 PDF 整篇跳過記 documents_skipped。
     """
     upload_dir = Path(get_settings().upload_dir)
 
@@ -255,6 +426,7 @@ async def _merge_documents(
     for d in dump_docs:
         file_path = d.get("file_path") or ""
         uuid_name = Path(file_path).name
+        uuid = Path(file_path).stem
         title = d.get("title") or uuid_name
         digest = _as_json(d.get("digest"))
         token_usage = _as_json(d.get("token_usage")) or {}
@@ -267,10 +439,13 @@ async def _merge_documents(
                 or local.get("status") in repo.TRANSIENT_INGEST_STATUSES
             ):
                 # 修復路徑：failed 或 transient 殘態（含 uploaded——restore 的 ingest phase
-                # 中斷時，未輪到的文獻全停在 uploaded）皆清殘塊後重嵌
+                # 中斷時，未輪到的文獻全停在 uploaded）皆清殘塊後走三路分派
                 # （保留使用者本地標註，故不刪文獻本身）。
                 await repo.delete_chunks(session, local["id"])
-                ingest_jobs.append((local["id"], True, title))
+                job = await _dispatch_chunks(
+                    session, local["id"], title, staging, uuid, format_version, True, chunk_remap
+                )
+                ingest_jobs.append(job)
             continue
 
         if uuid_name not in remote_pdf_map:
@@ -291,7 +466,10 @@ async def _merge_documents(
         )
         remap[d["id"]] = new_id
         summary["documents_new"] += 1
-        ingest_jobs.append((new_id, not digest, title))
+        job = await _dispatch_chunks(
+            session, new_id, title, staging, uuid, format_version, not digest, chunk_remap
+        )
+        ingest_jobs.append(job)
         if isinstance(digest, dict):
             digest_fixups.append((new_id, digest))
 
@@ -309,8 +487,13 @@ async def _merge_annotations(
     dump_anns: list[dict],
     doc_remap: dict[int, int],
     summary: dict[str, Any],
+    chunk_remap: dict[int, int],
 ) -> None:
-    """身分簽章 (document, type, page, bbox)。存在→比 updated_at 新者覆蓋；否則插入。"""
+    """身分簽章 (document, type, page, bbox)。存在→比 updated_at 新者覆蓋；否則插入。
+
+    新插入的列 chunk_id 經 `chunk_remap`（old→new）轉新 id（查無或 dump 為 null→NULL）；
+    v1（chunk_remap 空）自然全數 NULL，維持 D11 行為。
+    """
     cache: dict[int, dict[tuple, dict[str, Any]]] = {}
 
     async def _index_for(local_doc_id: int) -> dict[tuple, dict[str, Any]]:
@@ -355,6 +538,7 @@ async def _merge_annotations(
             note_text=a.get("note_text") or "",
             created_at=a["created_at"],
             updated_at=a.get("updated_at") or a["created_at"],
+            chunk_id=chunk_remap.get(a.get("chunk_id")),
         )
         idx[sig] = {"id": new_id, "updated_at": dump_dt}
         summary["annotations_new"] += 1
@@ -365,8 +549,12 @@ async def _merge_glossary(
     dump_glos: list[dict],
     doc_remap: dict[int, int],
     summary: dict[str, Any],
+    chunk_remap: dict[int, int],
 ) -> None:
-    """身分簽章 (document, term, target_lang, page)。無 updated_at 可比 → 存在即跳過。"""
+    """身分簽章 (document, term, target_lang, page)。無 updated_at 可比 → 存在即跳過。
+
+    新插入的列 chunk_id 經 `chunk_remap` 轉新 id（查無或 null→NULL）；v1 維持 NULL。
+    """
     cache: dict[int, set[tuple]] = {}
 
     async def _index_for(local_doc_id: int) -> set[tuple]:
@@ -396,6 +584,7 @@ async def _merge_glossary(
             bbox_list=_as_json(g["bbox_list"]) or [],
             notes=g.get("notes") or "",
             created_at=g["created_at"],
+            chunk_id=chunk_remap.get(g.get("chunk_id")),
         )
         idx.add(sig)
         summary["glossary_new"] += 1
@@ -504,14 +693,19 @@ async def _merge_phase(
     remote_pdf_map: dict[str, str],
     local_by_uuid: dict[str, dict],
     summary: dict[str, Any],
-) -> list[tuple[int, bool, str]]:
-    """在單一 session 內逐表合併，回傳待 ingest 的工作清單 (local_doc_id, run_digest, title)。
+    staging: Path,
+    format_version: int,
+) -> list[_IngestJob]:
+    """在單一 session 內逐表合併，回傳待 ingest phase 處理的 `_IngestJob` 清單。
 
     新文獻 PDF 已在呼叫前的 `_download_new_document_pdfs` 下載完畢（無 session 階段），
-    這裡的 session 全程只做 DB 寫入，不再被下載占住連線（M15 T-FD-06）。
+    這裡的 session 全程只做 DB 寫入，不再被下載占住連線（M15 T-FD-06）。v2 於 documents
+    階段插入 chunks 並建 `chunk_remap`（old→new chunk id），供 annotations/glossary 的
+    chunk_id remap（D12）；documents 先於這兩表，FK 有效。
     """
     backup.set_progress("merge", 0, 1)
-    ingest_jobs: list[tuple[int, bool, str]] = []
+    ingest_jobs: list[_IngestJob] = []
+    chunk_remap: dict[int, int] = {}
     async with SessionLocal() as session:
         project_remap = await _merge_projects(session, dumps["projects"])
         doc_remap = await _merge_documents(
@@ -522,9 +716,12 @@ async def _merge_phase(
             local_by_uuid,
             summary,
             ingest_jobs,
+            staging,
+            format_version,
+            chunk_remap,
         )
-        await _merge_annotations(session, dumps["annotations"], doc_remap, summary)
-        await _merge_glossary(session, dumps["glossary_entries"], doc_remap, summary)
+        await _merge_annotations(session, dumps["annotations"], doc_remap, summary, chunk_remap)
+        await _merge_glossary(session, dumps["glossary_entries"], doc_remap, summary, chunk_remap)
         await _merge_conversations(
             session, dumps["conversations"], dumps["messages"], doc_remap, project_remap, summary
         )
@@ -535,22 +732,52 @@ async def _merge_phase(
 # ---------- phase: ingest ----------
 
 
-async def _ingest_phase(ingest_jobs: list[tuple[int, bool, str]], summary: dict[str, Any]) -> None:
-    """逐篇序列重嵌（兼進度 n/m）；單篇失敗記 summary.ingest_failed 續跑（D11）。"""
+async def _apply_direct(job: _IngestJob) -> None:
+    """直灌 (a)：把 dump 帶來的向量寫回（embedding null 的 chunk 已在分派時濾除）+ 轉 ready。
+
+    零 LLM 零解析；digest 沿用 dump（restore_insert_document 已寫入，此處不重生成）。
+    """
+    async with SessionLocal() as session:
+        if job.chunk_ids:
+            await repo.update_chunk_embeddings(session, job.chunk_ids, job.vectors)
+        await repo.set_document_status(session, job.doc_id, "ready")
+
+
+async def _apply_reembed(job: _IngestJob) -> None:
+    """重嵌 (b)：content 已入庫，僅重算向量（`embed_passages`）+ 轉 ready；免重解析。"""
+    embeddings = await embed_passages(job.contents) if job.contents else []
+    async with SessionLocal() as session:
+        if job.chunk_ids:
+            await repo.update_chunk_embeddings(session, job.chunk_ids, embeddings)
+        await repo.set_document_status(session, job.doc_id, "ready")
+
+
+async def _ingest_phase(ingest_jobs: list[_IngestJob], summary: dict[str, Any]) -> None:
+    """逐篇序列處理（兼進度 n/m）；單篇失敗記 summary.ingest_failed 續跑（D11）。
+
+    三路分派（D12）：direct 直灌向量、reembed 重算向量、full 走 `ingest_document`
+    下載解析重建。三者都以「篇」計數同一 `ingest` phase（前端零改動）。
+    """
     total = len(ingest_jobs)
-    for i, (doc_id, run_digest, title) in enumerate(ingest_jobs, start=1):
+    for i, job in enumerate(ingest_jobs, start=1):
         backup.set_progress("ingest", i, total)
         try:
-            await ingest_document(doc_id, run_digest=run_digest)
+            if job.path == "direct":
+                await _apply_direct(job)
+            elif job.path == "reembed":
+                await _apply_reembed(job)
+            else:
+                await ingest_document(job.doc_id, run_digest=job.run_digest)
         except Exception:
-            logger.exception("restore: ingest 拋出例外 doc=%s", doc_id)
-            summary["ingest_failed"].append(title)
+            logger.exception("restore: ingest 拋出例外 doc=%s", job.doc_id)
+            summary["ingest_failed"].append(job.title)
             continue
-        # ingest_document 內部吞例外並標 failed；查狀態補記 ingest_failed。
-        async with SessionLocal() as session:
-            doc = await repo.get_document(session, doc_id)
-        if doc is not None and doc["status"] == "failed":
-            summary["ingest_failed"].append(title)
+        # full 路徑的 ingest_document 內部吞例外並標 failed；查狀態補記 ingest_failed。
+        if job.path == "full":
+            async with SessionLocal() as session:
+                doc = await repo.get_document(session, job.doc_id)
+            if doc is not None and doc["status"] == "failed":
+                summary["ingest_failed"].append(job.title)
 
 
 # ---------- 編排 ----------
@@ -588,9 +815,12 @@ async def run_restore() -> None:
         staging = _prepare_restore_staging()
         summary = _empty_summary()
         try:
-            dumps, remote_pdf_map = await _download_phase(staging)
+            dumps, remote_pdf_map, manifest = await _download_phase(staging)
+            format_version = int(manifest.get("format_version") or 1)
             local_by_uuid = await _download_new_document_pdfs(dumps["documents"], remote_pdf_map)
-            ingest_jobs = await _merge_phase(dumps, remote_pdf_map, local_by_uuid, summary)
+            ingest_jobs = await _merge_phase(
+                dumps, remote_pdf_map, local_by_uuid, summary, staging, format_version
+            )
             await _ingest_phase(ingest_jobs, summary)
             await _record_result(ok=True, summary=summary)
         except Exception as exc:
