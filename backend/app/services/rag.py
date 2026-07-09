@@ -16,8 +16,10 @@ from app.db import repo
 TOP_K_DOCUMENT = 8
 TOP_K_MULTI = 12
 HISTORY_LIMIT = 10
-# Citation regex: supports [C123], [c123], and bare C123 formats per docs/02-architecture D1
-_CITATION_RE = re.compile(r"(?:\[)?[Cc](\d+)(?:\])?")
+# 僅支援行內方括號 [C123]/[c123]（見 02-architecture D1/§7）。刻意不容忍裸 C123：
+# 前端兩個渲染器只認方括號型，放寬只會產生畫不出 chip 的幽靈引用；且論文正文常見
+# 裸 "C4"（化學式/暫存器等）撞上有效 chunk id 會誤收引用。（M15 T-FD-99 審查決議）
+_CITATION_RE = re.compile(r"\[[Cc](\d+)\]")
 _PROMPTS = Path(__file__).parent.parent / "prompts"
 _PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 

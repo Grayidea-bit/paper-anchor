@@ -72,7 +72,7 @@
 ### D4 導讀生成
 - 上傳解析完成後 BackgroundTask 觸發，結果為結構化 JSON（研究問題/方法/發現/貢獻/限制，各含 `cited_chunks`），存 `documents.digest`。
 - 長文獻（>100 chunks）採 map-reduce：分段摘要 → 合併。
-- 文件狀態機：`uploaded → parsing → embedding → digesting → ready | failed(error_msg)`，前端輪詢 `GET /api/documents/{id}` 顯示進度。
+- 文件狀態機：`uploaded → parsing → embedding → ready | failed(error_msg)`，前端輪詢 `GET /api/documents/{id}` 顯示進度。導讀（digest）於 `ready` 後背景生成，**不佔獨立 DB 狀態**（schema CHECK 中的 `digesting` 為保留值、程式從不寫入；M15 T-FD-99 審查註記）。
 - **啟動時 reconciliation（M15 T-FD-01）**：程序被殺（重啟／OOM／`--reload`）會使 ingest 中途文獻永久卡在 `parsing`/`embedding` 這類 transient 殘態。lifespan 啟動時把所有卡在 transient 狀態的文獻視為「上一輪被中斷」，一律重置為 `failed`（帶 `error_msg`），使其可被重跑而非永久黑洞。
 - **ingest 冪等（M15 T-FD-01）**：`ingest_document` 開頭無條件 `delete_chunks`（廉價換冪等），任何重跑（reingest 端點、restore 修復、啟動重置後手動重試）都先清舊 chunks 再重建，不撞 `UNIQUE(document_id, chunk_index)`、不留半殘狀態。
 - **手動重跑入口**：`POST /api/documents/{id}/reingest`（見 §5）清舊 chunks 重跑 ingest；文獻不存在回 404；該文獻或全域 backup/restore 操作進行中回 409 `operation_running`。
@@ -364,6 +364,6 @@ ai-paper-reader/
 | 風險 | 對策 |
 |---|---|
 | PDF 版面千奇百怪，bbox 對不準 | 高亮以「段落級」為準不追求字級；解析失敗 fallback 為純文字模式（無高亮但可對話） |
-| LLM 不乖乖輸出 `[C12]` 標記 | prompt few-shot 示範 + 後端正則容錯（`[C12]`/`[c12]`/`C12`）；引用解析失敗時退化為純文字回答 |
+| LLM 不乖乖輸出 `[C12]` 標記 | prompt few-shot 示範 + 後端正則容錯（`[C12]`/`[c12]`，**僅行內方括號型**——裸 `C12` 刻意不支援：前端渲染器只認方括號，且論文正文常見裸 "C4" 會誤命中；M15 決議）；引用解析失敗時退化為純文字回答 |
 | 雙欄 + PDF.js 前端複雜度高 | M1 先做「能渲染能跳頁」，高亮與選取選單拆成獨立任務 |
 | Embedding 供應商維度不同 | VECTOR 維度寫入 config，migration 支援重建 |

@@ -1,8 +1,9 @@
 """啟動時 reconciliation + /reingest 端點（M15 T-FD-01 / D4）。
 
-ingest 走 BackgroundTask，程序中途被殺會讓文獻卡在 parsing/embedding 這類 transient
-非終態，永遠顯示處理中且無重試入口。這裡測兩件事：
-1. `repo.reconcile_interrupted_ingests` 只轉 transient 狀態，不動 ready/uploaded 等其他狀態。
+ingest 走 BackgroundTask，程序中途被殺會讓文獻卡在 uploaded/parsing/embedding 這類
+transient 非終態，永遠顯示處理中且無重試入口（uploaded 特別對應 restore 的 ingest phase
+中斷——未輪到的文獻整批停在 uploaded；T-FD-99 審查補入）。這裡測兩件事：
+1. `repo.reconcile_interrupted_ingests` 只轉 TRANSIENT_INGEST_STATUSES，不動 ready/failed。
 2. `POST /api/documents/{id}/reingest` 的 404 / 409（該文獻進行中、全域 backup/restore
    進行中）/ 202 三態。
 """
@@ -43,7 +44,7 @@ async def test_reconcile_interrupted_ingests_resets_only_transient_states(test_d
     async with session_maker() as s:
         n = await repo.reconcile_interrupted_ingests(s)
 
-    assert n == 2  # 只有 parsing + embedding 兩筆被轉
+    assert n == 3  # uploaded + parsing + embedding 三筆被轉（uploaded 孤兒同屬中斷殘態）
 
     async with session_maker() as s:
         rows = (await s.execute(text("SELECT title, status, error_msg FROM documents"))).all()
@@ -53,8 +54,10 @@ async def test_reconcile_interrupted_ingests_resets_only_transient_states(test_d
     assert by_title["Stuck parsing"].error_msg
     assert by_title["Stuck embedding"].status == "failed"
     assert by_title["Stuck embedding"].error_msg
-    # 其他狀態不受影響（含 conftest 種好的 ready 文獻）
-    assert by_title["Just uploaded"].status == "uploaded"
+    # 啟動時仍在 uploaded ＝ 背景 ingest 從未起跑（上傳或 restore 中斷），一樣要能救回
+    assert by_title["Just uploaded"].status == "failed"
+    assert by_title["Just uploaded"].error_msg
+    # 終態不受影響（含 conftest 種好的 ready 文獻）
     assert by_title["Already failed"].status == "failed"
     assert by_title["Test Document"].status == "ready"
 

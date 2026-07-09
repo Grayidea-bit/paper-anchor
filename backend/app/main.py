@@ -39,6 +39,8 @@ def _warn_if_multi_worker() -> None:
     不跨行程共享。多 worker 下併發互斥失效（可能同時跑兩份備份／還原）、設定更新只對接到請求
     的那個 worker 生效。本系統設計為單 worker（見 docs/02-architecture.md 部署假設）。
     輕量偵測：讀 gunicorn/uvicorn 慣用的 `WEB_CONCURRENCY` 環境變數。
+    盡力而為的偵測：`uvicorn --workers N` CLI 不設此變數，該路徑偵測不到（無可靠跨行程訊號）
+    ——防線以文件（部署假設）為主，本警告只攔 gunicorn/WEB_CONCURRENCY 慣例路徑。
     """
     raw = os.getenv("WEB_CONCURRENCY", "").strip()
     try:
@@ -63,7 +65,8 @@ async def lifespan(_: FastAPI):
     except Exception:
         pass  # DB 未就緒時延後到第一次 API 呼叫
     try:
-        # 啟動時自癒（M15 T-FD-01 / D4）：上一輪被中斷的 ingest（parsing/embedding）轉 failed，
+        # 啟動時自癒（M15 T-FD-01 / D4）：上一輪被中斷的 ingest（uploaded/parsing/embedding，
+        # 含 restore ingest phase 中斷時停在 uploaded 的整批）轉 failed，
         # 使其可經 /reingest 端點救回而非永久卡住。DB 未就緒時容錯略過（同上）。
         async with SessionLocal() as session:
             n = await repo.reconcile_interrupted_ingests(session)

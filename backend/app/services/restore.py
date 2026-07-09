@@ -260,8 +260,12 @@ async def _merge_documents(
         local = local_by_uuid.get(uuid_name)
         if local is not None:
             remap[d["id"]] = local["id"]
-            if local.get("status") in ("failed", "parsing", "embedding"):
-                # 修復路徑：failed 或 transient 殘態皆清殘塊後重嵌
+            if (
+                local.get("status") == "failed"
+                or local.get("status") in repo.TRANSIENT_INGEST_STATUSES
+            ):
+                # 修復路徑：failed 或 transient 殘態（含 uploaded——restore 的 ingest phase
+                # 中斷時，未輪到的文獻全停在 uploaded）皆清殘塊後重嵌
                 # （保留使用者本地標註，故不刪文獻本身）。
                 await repo.delete_chunks(session, local["id"])
                 ingest_jobs.append((local["id"], True, title))

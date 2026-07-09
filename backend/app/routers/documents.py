@@ -130,6 +130,11 @@ async def reingest_document(doc_id: int, background_tasks: BackgroundTasks) -> d
     文獻不存在 → 404。該文獻已在 ingest 中（status parsing/embedding，ingest 無全域鎖，
     靠文獻 status 判斷）或全域 backup/restore 進行中 → 409 `operation_running`（避免與
     還原互踩）。否則把 status 重置為 parsing（順帶清掉舊 error_msg）並排入背景 ingest。
+
+    已知限制（M15 T-FD-99 審查）：此檢查為 check-only、不持有 backup 的 try_begin 鎖，
+    檢查與背景 ingest 起跑之間理論上可被 restore/scheduled backup 插入（TOCTOU）。
+    單機單事件迴圈下窗口極小且後果可收斂（restore 對 parsing 文獻走 delete_chunks 重排、
+    ingest 本身冪等），暫不引入 doc 級鎖。
     """
     async with SessionLocal() as session:
         doc = await repo.get_document(session, doc_id)

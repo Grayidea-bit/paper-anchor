@@ -164,19 +164,27 @@ async def set_document_status(
     await session.commit()
 
 
+# 非終態集合（M15）：啟動時仍處於這些狀態的文獻必為孤兒——背景 task 不會跨程序重啟存活。
+# uploaded 也在內：上傳/還原插列與背景 ingest 起跑之間被殺，文獻會停在 uploaded 永不推進
+# （restore 的 ingest phase 逐篇序列，中斷時未輪到的整批都是這個狀態）。
+# reconcile 與 restore 修復共用此常數，避免多處集合各自漂移。
+TRANSIENT_INGEST_STATUSES: tuple[str, ...] = ("uploaded", "parsing", "embedding")
+
+
 async def reconcile_interrupted_ingests(session: AsyncSession) -> int:
     """啟動時自癒（M15 T-FD-01 / D4）：把卡在 transient ingest 狀態的文獻轉 failed。
 
-    程序被殺（重啟／OOM／`--reload`）會讓 ingest 中途文獻永久卡在 parsing/embedding
+    程序被殺（重啟／OOM／`--reload`）會讓 ingest 中途文獻永久卡在 uploaded/parsing/embedding
     ——這類非終態前端會永遠顯示處理中且無重試入口。lifespan 啟動時視為「上一輪被中斷」，
     一律重置為 failed（帶可讀 error_msg），使其可經 reingest 端點救回。回傳受影響筆數。
+    只在啟動時呼叫：執行中的正常上傳短暫處於 uploaded，不受影響。
     """
     result = await session.execute(
         text(
             """
             UPDATE documents SET status = 'failed',
                 error_msg = '處理中斷（伺服器重啟），請重新解析'
-            WHERE status IN ('parsing', 'embedding')
+            WHERE status IN ('uploaded', 'parsing', 'embedding')
             """
         )
     )
