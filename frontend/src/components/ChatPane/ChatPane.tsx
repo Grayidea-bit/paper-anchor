@@ -112,7 +112,7 @@ export function ChatPane() {
 
   if (chatContext === null) {
     return (
-      <section className={styles.pane} aria-label="對話面板">
+      <section className={styles.pane} aria-label={t.ariaChatPane}>
         <div className={styles.emptyWrap}>
           <p className={styles.hint}>{t.chatEmptyHint}</p>
         </div>
@@ -502,7 +502,7 @@ function Chat({ context }: { context: ChatContext }) {
   );
 
   return (
-    <section className={styles.pane} aria-label="對話面板">
+    <section className={styles.pane} aria-label={t.ariaChatPane}>
       {!isDocument && (
         <div className={styles.scopeBar}>
           {context.kind === "project" && (

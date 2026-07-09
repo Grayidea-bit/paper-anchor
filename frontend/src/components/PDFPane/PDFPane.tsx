@@ -464,7 +464,7 @@ export function PDFPane() {
 
   if (documentId === null) {
     return (
-      <section className={styles.paneLibrary} aria-label="文獻庫">
+      <section className={styles.paneLibrary} aria-label={t.ariaLibrary}>
         <Library />
       </section>
     );
@@ -476,7 +476,7 @@ export function PDFPane() {
     <div className={styles.paneWrap}>
       <section
         className={styles.pane}
-        aria-label="文獻閱讀器"
+        aria-label={t.ariaReader}
         onMouseUp={onMouseUp}
         onScroll={onScroll}
         ref={(el) => {

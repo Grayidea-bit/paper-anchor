@@ -30,9 +30,11 @@ def _select_chunks(chunks: list[dict]) -> tuple[list[dict], bool]:
             break
         head.append(c)
         used += len(c["content"])
+    # Use id set to avoid O(n²) list membership checks
+    head_ids = {c["id"] for c in head}
     tail, used = [], 0
     for c in reversed(chunks):
-        if used + len(c["content"]) > tail_budget or c in head:
+        if used + len(c["content"]) > tail_budget or c["id"] in head_ids:
             break
         tail.insert(0, c)
         used += len(c["content"])
@@ -49,7 +51,9 @@ async def generate_digest(doc_id: int, language: str | None = None) -> None:
             return
         try:
             selected, truncated = _select_chunks(chunks)
-            system = load_prompt("digest_system.md").replace("{language}", language_name(language))
+            system = load_prompt("digest_system.md", expected_placeholders={"language"}).replace(
+                "{language}", language_name(language)
+            )
             lines = [f"文獻標題：{doc['title']}", ""]
             if truncated:
                 lines.append("（注意：文獻過長，中段部分段落已省略）")

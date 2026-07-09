@@ -20,7 +20,7 @@ export function GlossaryPane() {
 
   if (entries.length === 0 && !creating) {
     return (
-      <section className={styles.pane} aria-label="翻譯表面板">
+      <section className={styles.pane} aria-label={t.ariaGlossaryPane}>
         <div className={styles.emptyWrap}>
           <p className={styles.hint}>{t.glossaryEmpty}</p>
         </div>

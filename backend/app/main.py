@@ -27,6 +27,7 @@ from app.routers import (
     tools as tools_router,
 )
 from app.services.backup_scheduler import scheduler_loop
+from app.version import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ async def lifespan(_: FastAPI):
             await task
 
 
-app = FastAPI(title="Paper Anchor", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Paper Anchor", version=APP_VERSION, lifespan=lifespan)
 app.include_router(documents.router)
 app.include_router(annotations.router)
 app.include_router(glossary.router)

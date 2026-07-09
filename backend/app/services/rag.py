@@ -16,12 +16,33 @@ from app.db import repo
 TOP_K_DOCUMENT = 8
 TOP_K_MULTI = 12
 HISTORY_LIMIT = 10
-_CITATION_RE = re.compile(r"\[[Cc](\d+)\]")
+# Citation regex: supports [C123], [c123], and bare C123 formats per docs/02-architecture D1
+_CITATION_RE = re.compile(r"(?:\[)?[Cc](\d+)(?:\])?")
 _PROMPTS = Path(__file__).parent.parent / "prompts"
+_PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 
 
-def load_prompt(name: str) -> str:
-    return (_PROMPTS / name).read_text(encoding="utf-8")
+def load_prompt(name: str, expected_placeholders: set[str] | None = None) -> str:
+    """Load a prompt file and optionally verify expected placeholders exist.
+
+    Args:
+        name: Prompt filename
+        expected_placeholders: Set of placeholder names to verify (e.g. {"language", "context"})
+
+    Raises:
+        ValueError: If expected placeholders are missing from the prompt
+    """
+    content = (_PROMPTS / name).read_text(encoding="utf-8")
+
+    if expected_placeholders is not None:
+        found = set(_PLACEHOLDER_RE.findall(content))
+        missing = expected_placeholders - found
+        if missing:
+            raise ValueError(
+                f"Missing placeholders in {name}: {sorted(missing)}. Found: {sorted(found)}"
+            )
+
+    return content
 
 
 def language_name(code: str | None = None) -> str:
@@ -85,7 +106,9 @@ def build_system(
     language: str | None = None,
 ) -> str:
     """系統提示詞 + 可引用段落 context block（agent 的 instructions）。"""
-    system = load_prompt("chat_system.md").replace("{language}", language_name(language))
+    system = load_prompt("chat_system.md", expected_placeholders={"language"}).replace(
+        "{language}", language_name(language)
+    )
     # 設定頁的附加系統提示詞（使用者自訂，附在守則之後）
     extra = settings_store.runtime("system_prompt_extra")
     if extra:

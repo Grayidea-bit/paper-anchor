@@ -316,7 +316,7 @@ async def similar_chunks_scoped(
                 SELECT c.id, c.document_id, c.chunk_index, c.page, c.section,
                        c.content, c.bbox_list, d.title AS document_title
                 FROM chunks c
-                JOIN documents d ON d.id = c.document_id AND d.user_id = :uid
+                JOIN documents d ON d.id = c.document_id AND d.user_id = :uid AND d.status = 'ready'
                 WHERE c.document_id = :doc_id AND c.embedding IS NOT NULL
                 ORDER BY c.embedding <=> CAST(:emb AS vector)
                 LIMIT :k

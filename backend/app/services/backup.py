@@ -39,6 +39,7 @@ from app.db import repo
 from app.db.session import SessionLocal
 from app.errors import AppError
 from app.services import gdrive
+from app.version import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,6 @@ DUMP_TABLES: tuple[str, ...] = (
 )
 
 FORMAT_VERSION = 1
-
-# 對齊 backend/app/main.py 的 `FastAPI(version=...)`。services 層不 import app.main
-# （main → routers.backup → services.backup 會與 `from app.main import app` 形成循環匯入），
-# 故在此手動同步；main.py 版本號變動時記得一併更新。
-APP_VERSION = "0.1.0"
 
 
 def _default_staging_root() -> Path:

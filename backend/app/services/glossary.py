@@ -35,7 +35,7 @@ def _target_lang() -> str:
 async def _translate(term: str, context: str, target_lang: str) -> str:
     """呼叫 LLM 翻譯術語；失敗時擲出 LLMError（由呼叫端決定降級）。"""
     prompt = (
-        load_prompt("translate_term.md")
+        load_prompt("translate_term.md", expected_placeholders={"term", "context", "target_lang"})
         .replace("{term}", term)
         .replace("{context}", context)
         .replace("{target_lang}", target_lang)
@@ -62,7 +62,9 @@ def _parse_extraction(raw: str) -> tuple[str, str]:
 async def _extract_from_source(term: str, source_text: str, target_lang: str) -> tuple[str, str]:
     """呼叫 LLM 從詳細翻譯全文萃取（譯文, 註解）；失敗時擲出例外（由呼叫端決定降級）。"""
     prompt = (
-        load_prompt("glossary_extract.md")
+        load_prompt(
+            "glossary_extract.md", expected_placeholders={"term", "target_lang", "source_text"}
+        )
         .replace("{term}", term)
         .replace("{target_lang}", target_lang)
         .replace("{source_text}", source_text)

@@ -36,7 +36,7 @@ export function RightPane() {
   const notesAvailable = documentId !== null;
 
   return (
-    <section className={styles.pane} aria-label="右欄">
+    <section className={styles.pane} aria-label={t.ariaRightPane}>
       <div className={styles.tabs} role="tablist">
         <button
           type="button"

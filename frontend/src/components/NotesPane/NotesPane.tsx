@@ -44,7 +44,7 @@ export function NotesPane() {
 
   if (annotations.length === 0) {
     return (
-      <section className={styles.pane} aria-label="筆記面板">
+      <section className={styles.pane} aria-label={t.ariaNotesPane}>
         <div className={styles.emptyWrap}>
           <p className={styles.hint}>{t.notesEmpty}</p>
         </div>
