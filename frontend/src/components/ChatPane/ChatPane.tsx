@@ -327,6 +327,19 @@ function Chat({ context }: { context: ChatContext }) {
     setError(null);
     setMessages((prev) => {
       const last = prev[prev.length - 1];
+      const secondLast = prev[prev.length - 2];
+      // 失敗訊息殿後有兩種形狀：純 user（assistant 內容為空，onError 已移除該筆）；
+      // 或 user + 半截 assistant（mid-stream 錯誤保留已收到內容，見 onError）。
+      // 後者殿後是 assistant，下面單獨判斷 last 是 user 會失效，
+      // 需整組（失敗的 user + 其後未完成 assistant）一起剝除再重送，
+      // 否則會在陣列留下 [...,user, 半截assistant, user(重複), 新assistant]。
+      if (
+        last?.role === "assistant" &&
+        secondLast?.role === "user" &&
+        secondLast.content === failed.question
+      ) {
+        return prev.slice(0, -2);
+      }
       return last?.role === "user" && last.content === failed.question
         ? prev.slice(0, -1)
         : prev;

@@ -42,9 +42,13 @@ export const useBackupStore = create<BackupState>((set, get) => ({
   error: null,
 
   fetchStatus: async () => {
+    // 與其他入口（runBackup/runRestore/connect/disconnect）一致：一律在動作開頭
+    // 清掉舊 error，不要只綁在「成功才清」——否則上一次動作留下的 error 會在本次
+    // fetchStatus 失敗（例如網路瞬斷）時繼續殘留，混進下一個動作的畫面。
+    set({ error: null });
     try {
       const status = await api.getBackupStatus();
-      set({ status, error: null });
+      set({ status });
       // 偵測到（本機或其他來源觸發的）備份仍在跑，接手輪詢直到完成
       if (status.running) get().startPolling();
     } catch (err) {
@@ -138,6 +142,13 @@ export const useBackupStore = create<BackupState>((set, get) => ({
 
   stopPolling: () => {
     clearStatusPoll();
+    // 只有「connect 輪詢真的被中止」才重置 loading：
+    // 一般 status 輪詢（backup/restore 進度）與 connect 無關，不該誤碰 loading。
+    // 不這樣做的話，connect() 設 loading:true 後若 SettingsModal 在輪到 connected
+    // 前卸載（呼叫本函式清掉 connectPollId），loading 會永遠卡 true——
+    // module 級單例跨開關存活，導致重開設定頁「連接」鈕永久 disabled。
+    const hadConnectPoll = connectPollId !== null;
     clearConnectPoll();
+    if (hadConnectPoll) set({ loading: false });
   },
 }));
