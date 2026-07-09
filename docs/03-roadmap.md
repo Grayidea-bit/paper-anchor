@@ -189,15 +189,19 @@
 **任務卡（含模型分工）**
 
 - [x] [opus] T-FD-00 **文件先行**（鐵律 5）：§5 加 `POST /api/documents/{id}/reingest`（202／404／409）；02-architecture 補「單 process 部署假設」與「預設信任網段」小節、D4 補啟動 reconciliation 與 ingest 冪等、§4 的「刻意未建 ANN 索引」註記更新（僅 document scope 成立、library/project 為全庫精確掃描、chunk 破 ~2 萬應建 HNSW/ivfflat）；roadmap 開 M15 各卡。依賴：—
-- [ ] [sonnet] T-FD-01 **ingest 冪等與自癒**：`ingest_document` 開頭無條件 `delete_chunks`（廉價換冪等）；lifespan 啟動 reconciliation（`parsing/embedding` 殘態 → `failed` + error_msg）；新端點 `POST /api/documents/{id}/reingest`（409 若在跑）+ 前端 failed 文獻「重新解析」按鈕；restore 修復範圍擴及 transient 狀態。測試：崩潰殘態重置、重跑不撞 UNIQUE、reingest 端點。依賴：T-FD-00
-- [ ] [opus] T-FD-02 **Postgres 整合測試層 + 漂移守護**：薄 Postgres 測試層（用 compose 的 db 或 testcontainers，跑真 migration，消滅 4 份手刻 DDL 副本）；覆蓋 `information_schema` vs `_DUMP_TABLE_COLUMNS` 欄位守護（新欄位必須顯式決定備份或忽略）、`similar_chunks_scoped`（vector `<=>`）、`total_token_usage`（JSONB）、backup dump→restore 往返、scope CHECK、TIMESTAMPTZ；標記為獨立 pytest marker（無 Postgres 時 skip）。依賴：T-FD-00
-- [ ] [sonnet] T-FD-03 **前端正確性批次**：connect loading 卡死（`stopPolling` 重置 loading）；mid-stream 錯誤後 retry 產生重複提問（剝除失敗組再重送）；SSE 壞 frame 殺整條流（`JSON.parse` 包 try/catch 略過）；backup/restore 間 error 殘留清除。依賴：—
-- [ ] [opus] T-FD-04 **安全批次**（安全敏感，不下放）：compose 埠綁定改 `127.0.0.1`（db 拿掉對外埠）+ db 強密碼；無 body 的 state-changing 端點強制 `application/json`（堵跨站 form POST 觸發 restore/disconnect）；lifespan 偵測多 worker 即警告（鎖與快取為 per-process）；README 部署假設註記。依賴：T-FD-00
-- [ ] [sonnet] T-FD-05 **前端串流/記憶體效能**：訊息抽 `React.memo` 子元件（token 串流不再重算全列表 markdown）；捲動改「在底部附近才自動跟隨」+ 串流中 `auto` 行為；PDF canvas 離開可視範圍回收（保留佔位高度）+ 換文獻 `key={documentId}` 重建；scroll handler rAF 節流。依賴：—
-- [ ] [sonnet] T-FD-06 **後端寫入效能**：`insert_chunks` 改單條多列 INSERT、`update_chunk_embeddings` 改 executemany/VALUES JOIN（消 N+1 round-trip）；restore 的 Drive 下載移出 DB session（先下載後開 session，比照 backup 慣例）；migration 補 `annotations.chunk_id`/`glossary_entries.chunk_id` 兩個 FK 索引。依賴：T-FD-02（用其測試層驗證）
-- [ ] [sonnet] T-FD-07 **工具 schema 對齊**：`tools/_input_schema` 解析 docstring Args 段補齊 per-param description/required/預設值，消除 Claude 後端工具品質劣化；兩後端 schema 一致性測試。依賴：—
-- [ ] [haiku] T-FD-08 **記帳清理批次**：死 i18n 鍵刪除；aria-label 入 i18n；prompt 載入 assert 佔位符存在；`parse_citations` 正則放寬對齊文件（或改文件）；`similar_chunks_scoped` 單篇分支補 `status='ready'`；digest `_select_chunks` O(n²) 改 set；`APP_VERSION` 單一來源；`.env.example` 同步檢查。依賴：T-FD-01～07 後
-- [ ] [opus] T-FD-99 **整合驗證**：pytest（SQLite + 新 Postgres 層）/ruff/npm build 全綠；瀏覽器實測（connect 卡死重現路徑修復、串流長回答捲動、failed 文獻重新解析、100 頁文獻記憶體觀測）；引用鏈回歸（動了 ingest/insert_chunks，跑 eval_citations 或以 Postgres 層等效覆蓋）；roadmap 勾選。依賴：全部
+- [x] [sonnet] T-FD-01 **ingest 冪等與自癒**：`ingest_document` 開頭無條件 `delete_chunks`（廉價換冪等）；lifespan 啟動 reconciliation（`parsing/embedding` 殘態 → `failed` + error_msg）；新端點 `POST /api/documents/{id}/reingest`（409 若在跑）+ 前端 failed 文獻「重新解析」按鈕；restore 修復範圍擴及 transient 狀態。測試：崩潰殘態重置、重跑不撞 UNIQUE、reingest 端點。依賴：T-FD-00
+- [x] [opus] T-FD-02 **Postgres 整合測試層 + 漂移守護**：薄 Postgres 測試層（用 compose 的 db 或 testcontainers，跑真 migration，消滅 4 份手刻 DDL 副本）；覆蓋 `information_schema` vs `_DUMP_TABLE_COLUMNS` 欄位守護（新欄位必須顯式決定備份或忽略）、`similar_chunks_scoped`（vector `<=>`）、`total_token_usage`（JSONB）、backup dump→restore 往返、scope CHECK、TIMESTAMPTZ；標記為獨立 pytest marker（無 Postgres 時 skip）。依賴：T-FD-00
+- [x] [sonnet] T-FD-03 **前端正確性批次**：connect loading 卡死（`stopPolling` 重置 loading）；mid-stream 錯誤後 retry 產生重複提問（剝除失敗組再重送）；SSE 壞 frame 殺整條流（`JSON.parse` 包 try/catch 略過）；backup/restore 間 error 殘留清除。依賴：—
+- [x] [opus] T-FD-04 **安全批次**（安全敏感，不下放）：compose 埠綁定改 `127.0.0.1`（db 拿掉對外埠）+ db 強密碼；無 body 的 state-changing 端點強制 `application/json`（堵跨站 form POST 觸發 restore/disconnect）；lifespan 偵測多 worker 即警告（鎖與快取為 per-process）；README 部署假設註記。依賴：T-FD-00
+- [x] [sonnet] T-FD-05 **前端串流/記憶體效能**：訊息抽 `React.memo` 子元件（token 串流不再重算全列表 markdown）；捲動改「在底部附近才自動跟隨」+ 串流中 `auto` 行為；PDF canvas 離開可視範圍回收（保留佔位高度）+ 換文獻 `key={documentId}` 重建；scroll handler rAF 節流。依賴：—
+- [x] [sonnet] T-FD-06 **後端寫入效能**：`insert_chunks` 改單條多列 INSERT、`update_chunk_embeddings` 改 executemany/VALUES JOIN（消 N+1 round-trip）；restore 的 Drive 下載移出 DB session（先下載後開 session，比照 backup 慣例）；migration 補 `annotations.chunk_id`/`glossary_entries.chunk_id` 兩個 FK 索引。依賴：T-FD-02（用其測試層驗證）
+- [x] [sonnet] T-FD-07 **工具 schema 對齊**：`tools/_input_schema` 解析 docstring Args 段補齊 per-param description/required/預設值，消除 Claude 後端工具品質劣化；兩後端 schema 一致性測試。依賴：—
+- [x] [haiku] T-FD-08 **記帳清理批次**：死 i18n 鍵刪除；aria-label 入 i18n；prompt 載入 assert 佔位符存在；`parse_citations` 正則放寬對齊文件（或改文件）；`similar_chunks_scoped` 單篇分支補 `status='ready'`；digest `_select_chunks` O(n²) 改 set；`APP_VERSION` 單一來源；`.env.example` 同步檢查。依賴：T-FD-01～07 後
+- [x] [opus] T-FD-99 **整合驗證**：pytest（SQLite + 新 Postgres 層）/ruff/npm build 全綠；瀏覽器實測（connect 卡死重現路徑修復、串流長回答捲動、failed 文獻重新解析、100 頁文獻記憶體觀測）；引用鏈回歸（動了 ingest/insert_chunks，跑 eval_citations 或以 Postgres 層等效覆蓋）；roadmap 勾選。依賴：全部
+  - 驗證紀錄：pytest 288 passed（SQLite 277 + Postgres 層 11，含漂移守護負向自證）/ ruff / npm build 全綠；**黑洞自癒 E2E 實測通過**（模擬中斷→啟動 reconciliation 轉 failed→UI「重新解析」→ready，全程約 10 秒）；埠綁定實測（api/web 僅 127.0.0.1、db 不對外）。
+  - 審查修正（整合審查發現，已修）：**HIGH** `uploaded` 黑洞縫隙——restore ingest phase 中斷時未輪到的文獻停在 uploaded 無法救回，reconcile 與 restore 修復集合補入並統一為 `repo.TRANSIENT_INGEST_STATUSES`；**MED** citation 正則放寬打回（僅方括號 `[C12]`/`[c12]`——前端渲染器只認方括號，裸 C12 會誤命中論文正文，D1/§7 文件同步）；低項：reingest TOCTOU 與多 worker 偵測侷限註記、digesting 死狀態文件校正。
+  - eval_citations：兩輪（NIM）9/15 與 7/15，**失敗全為 NIM 免費層容量限流**（ResourceExhausted，含 962/48 之供應商端飽和計數），**取得回答的題目跨兩輪 0 個引用品質失敗、錨點檢查全綠**——與 M3 首輪限流模式一致，判定引用鏈無退化；另有 Postgres 層 ingest→檢索語意測試把關。
+  - 卡外修正（使用者任務籤）：Claude 後端 `error_max_turns`——`_MAX_TURNS` 8→16 + 已有可見輸出時優雅收尾不打成錯誤 + 無輸出時可行動錯誤訊息（claude_backend.py，測試 +2）。
 
 **明確不做（審查建議但擱置）Deferred**：
 
