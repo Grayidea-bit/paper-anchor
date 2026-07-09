@@ -213,7 +213,16 @@ async def _dispatch_chunks(
     if data is None or not data.get("chunks"):
         return _IngestJob(doc_id=doc_id, title=title, path="full", run_digest=run_digest)
 
-    _, eff_model, eff_dim = effective_embed_config()
+    try:
+        _, eff_model, eff_dim = effective_embed_config()
+    except Exception as exc:
+        # 組態錯誤（如 embed_source=nim 但無 key）不該炸掉整輪還原——v1 路徑本就
+        # 不碰 effective_embed_config，v2 對齊：回落全重建，讓失敗留在該篇的
+        # ingest_failed（那裡同樣會因無 key 失敗，但整輪其餘文獻不受牽連）。
+        # M14 審查 L1。
+        logger.warning("restore: effective_embed_config 失敗（%s），回落全重建 doc=%s", exc, doc_id)
+        return _IngestJob(doc_id=doc_id, title=title, path="full", run_digest=run_digest)
+
     chunk_rows = data["chunks"]
     matches = data.get("embed_model") == eff_model and data.get("embed_dim") == eff_dim
 
@@ -257,6 +266,17 @@ async def _dispatch_chunks(
             if vec is not None:
                 embed_ids.append(nid)
                 vectors.append(vec)
+        if not embed_ids:
+            # 模型相符但向量全 null（備份當下該篇卡在 embedding 半途）：直灌會把
+            # 文獻標 ready 卻零可檢索向量，靜默劣化——改走重嵌補齊。M14 審查 L2。
+            logger.warning("restore: chunk 檔向量全 null，改走重嵌 doc=%s", doc_id)
+            return _IngestJob(
+                doc_id=doc_id,
+                title=title,
+                path="reembed",
+                chunk_ids=new_ids,
+                contents=[c["content"] for c in chunk_rows],
+            )
         return _IngestJob(
             doc_id=doc_id, title=title, path="direct", chunk_ids=embed_ids, vectors=vectors
         )

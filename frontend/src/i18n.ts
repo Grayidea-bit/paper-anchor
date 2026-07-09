@@ -122,7 +122,8 @@ const DICT = {
     settingsEmbedLocal: "本地模型",
     settingsEmbedNote:
       "自動＝有 NIM key 用 NIM，否則用本地模型；本地模型（BAAI/bge-m3）首次使用需下載約 2.2GB 模型檔",
-    settingsEmbedSwitchWarning: "切換來源後，既有文獻的向量索引需重建，否則檢索品質不一致",
+    settingsEmbedSwitchWarning:
+      "切換來源後，既有文獻的向量索引需重建，否則檢索品質不一致（請先儲存設定，再按「重建全庫索引」）",
     settingsEmbedReembedBtn: "重建全庫索引",
     settingsOperationReembed: "重建索引",
     settingsEmbedReembedConfirmTitle: "重建全庫向量索引？",
@@ -305,7 +306,7 @@ const DICT = {
     settingsEmbedNote:
       "Auto uses NIM when a NIM key is set, otherwise the local model; the local model (BAAI/bge-m3) needs to download a ~2.2GB model file the first time it's used",
     settingsEmbedSwitchWarning:
-      "Switching sources requires rebuilding the vector index for existing papers, otherwise retrieval quality will be inconsistent",
+      "Switching sources requires rebuilding the vector index for existing papers, otherwise retrieval quality will be inconsistent (save settings first, then press Rebuild full index)",
     settingsEmbedReembedBtn: "Rebuild full index",
     settingsOperationReembed: "Rebuilding index",
     settingsEmbedReembedConfirmTitle: "Rebuild the entire vector index?",

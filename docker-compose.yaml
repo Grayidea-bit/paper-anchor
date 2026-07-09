@@ -8,8 +8,8 @@ services:
     # DB 埠預設不對外暴露（M15 T-FD-04）：api 走 compose 內網以主機名 `db` 連線，主機無需直連。
     # 需從主機直連（psql / DBeaver）或跑 backend/tests/pg 的 Postgres 測試層時，取消下方註解，
     # 讓 localhost:5432 可連（TEST_DATABASE_URL 預設連 localhost:5432）；平時保持註解，減少暴露面。
-    # ports:
-    #   - "127.0.0.1:5432:5432"
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

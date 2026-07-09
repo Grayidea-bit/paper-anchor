@@ -59,6 +59,25 @@ This only covers chat — embedding still needs a NIM or other OpenAI-compatible
 
 Note: subscription usage is for personal use per Anthropic's consumer terms — don't wire this backend up for shared/production traffic.
 
+### Local Embedding (no NIM required)
+
+If you have a Claude subscription but no NVIDIA NIM key, Paper Anchor can process document embeddings with a built-in local model (BAAI/bge-m3, 1024-dim)—use your subscription for both chat and embeddings **with zero NIM dependency**.
+
+#### How to use
+
+1. Do **not** set `EMBED_API_KEY` in `.env` (leave it empty)
+2. Open Settings, go to **Embedding source**, and select **Local model** (or it auto-activates when you switch chat to Claude subscription)
+3. Upload, ask, generate digests, back up, restore — all without NIM
+
+If you've already filled in a NIM key, you can switch the Embedding source to "Local model" at any time in Settings to force local usage. **After switching, you must rebuild the full index** (one-click button) to re-embed existing papers (mixed vector embeddings break retrieval).
+
+#### Notes
+
+- **First-time setup requires internet**: the model file (~2.2GB) downloads into a docker volume and is cached — rebuilding the container won't re-download it. If the download fails, you can retry later.
+- **Machine requirements**: 4GB RAM recommended; typical resident use is ~1.6GB, peak ~2.5GB.
+- **Inference speed**: CPU embedding a paper (5–20 pages) takes ~10–30 seconds; similar to NIM latency.
+- **Backup & restore**: backup format v2 now includes vectors (base64-encoded) — if your embedding source matches at restore time, it completes in seconds with no re-embedding needed; if you switched sources, the system automatically re-embeds your papers (same as the one-click rebuild above).
+
 ### Cloud backup to Google Drive
 
 Connect your own Google Drive in Settings to back up PDFs, annotations, glossary entries, and conversations **one-way to the cloud** (not sync). Backups are incremental: PDFs already on the remote won't re-upload.

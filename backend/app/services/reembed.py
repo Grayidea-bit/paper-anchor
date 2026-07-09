@@ -34,6 +34,10 @@ async def run_reembed() -> None:
     逐篇處理，單篇失敗記 log 續跑（不中止整批，避免一篇壞資料卡住全庫重嵌）；
     結尾記一筆 summary log。不持久化 last_run（D12 未定義，reembed 只走進度輪詢，
     完成與否由 `GET /api/backup/status` 的 `running`/`operation` 回歸 null 判斷）。
+
+    中斷語意（M14 審查 M2）：逐篇 commit、跨篇非原子——中途中斷（重啟或單篇失敗
+    續跑）會留下部分新模型、部分舊模型的混合向量，重跑前檢索品質可能不一致；
+    再觸發一次 reembed 即收斂修復（全庫 ready 文獻重嵌，冪等）。
     """
     async with backup.try_begin("reembed") as acquired:
         if not acquired:

@@ -52,9 +52,11 @@ export function LlmSection({ view, patch, setPatch, onClearClaudeToken }: LlmSec
   const embedSource: EmbedSource = patch.embed_source ?? savedEmbedSource;
   const embedSourceDirty = embedSource !== savedEmbedSource;
 
-  // 三方共用鎖（backup/restore/reembed，見 D12）：任一進行中即不可觸發重建
+  // 三方共用鎖（backup/restore/reembed，見 D12）：任一進行中即不可觸發重建。
+  // embed_source 有未儲存變更時也擋（M14 審查 M3）：後端讀的是已持久化的值，
+  // 未存就按會以「舊來源」重嵌，與使用者意圖相反——先儲存再重建。
   const reembedRunning = backupStatus?.running === true && backupStatus.operation === "reembed";
-  const canReembed = backupStatus?.running !== true;
+  const canReembed = backupStatus?.running !== true && !embedSourceDirty;
 
   return (
     <>
