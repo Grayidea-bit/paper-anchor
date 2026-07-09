@@ -25,45 +25,12 @@ def _maybe_json(value):
 
 
 @pytest.fixture
-async def backup_db(test_db, monkeypatch):
+async def backup_db(conversations_messages_tables, monkeypatch):
     """在既有 test_db（users/projects/documents/chunks/annotations/glossary_entries）
-    之上，補上 conversations / messages 表（conftest 的共用 fixture 未建立這兩張表），
-    種入最小資料集，並把 services/backup.py 的 SessionLocal 換成測試用 session_maker。
+    與 conftest 共用 fixture 補上的 conversations / messages 表之上，種入最小資料集，
+    並把 services/backup.py 的 SessionLocal 換成測試用 session_maker。
     """
-    session_maker, engine = test_db
-
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE conversations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
-                    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
-                    scope TEXT NOT NULL DEFAULT 'document',
-                    title TEXT NOT NULL DEFAULT '新對話',
-                    model TEXT,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-                    content TEXT NOT NULL,
-                    citations JSON NOT NULL DEFAULT '[]',
-                    selection JSON,
-                    token_usage JSON NOT NULL DEFAULT '{}',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
+    session_maker, _ = conversations_messages_tables
 
     monkeypatch.setattr(backup, "SessionLocal", session_maker)
     # settings_store：直接灌 cache，略過 DB 的 settings 表（本卡不需要它，

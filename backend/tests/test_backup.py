@@ -72,43 +72,11 @@ def fake_settings_store(monkeypatch):
 
 
 @pytest.fixture
-async def orchestration_db(test_db, monkeypatch):
-    """補 conversations/messages 表（export_db_dumps 需要六表齊全），
-    並把 services/backup.py 的 SessionLocal 換成測試 session_maker。
+async def orchestration_db(conversations_messages_tables, monkeypatch):
+    """conversations/messages 表由 conftest 共用 fixture 建立（export_db_dumps 需六表齊全），
+    這裡只把 services/backup.py 的 SessionLocal 換成測試 session_maker。
     """
-    session_maker, engine = test_db
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE conversations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
-                    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
-                    scope TEXT NOT NULL DEFAULT 'document',
-                    title TEXT NOT NULL DEFAULT '新對話',
-                    model TEXT,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-                    content TEXT NOT NULL,
-                    citations JSON NOT NULL DEFAULT '[]',
-                    selection JSON,
-                    token_usage JSON NOT NULL DEFAULT '{}',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
+    session_maker, _ = conversations_messages_tables
     monkeypatch.setattr(backup, "SessionLocal", session_maker)
     return session_maker
 

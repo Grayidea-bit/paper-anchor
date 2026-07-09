@@ -9,3 +9,6 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "pg: 需要真 Postgres（localhost:5432, paper/paper）的整合測試；連不上時整組 skip。以 `py -m pytest -m pg` 選跑。",
+]

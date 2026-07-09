@@ -167,6 +167,51 @@ async def test_db() -> AsyncGenerator[tuple[AsyncSession, create_async_engine], 
     await engine.dispose()
 
 
+# conversations / messages 的 SQLite 測試 DDL（單一定義處）。
+# 主 test_db fixture 只建 M0–M11 核心表；備份/還原相關測試（test_backup*/test_restore）
+# 額外需要這兩張表，過去各檔手刻一份平行副本 → 收斂於此，避免欄位漂移。
+# 註：真 Postgres schema（migrations 001/002/004）另有 conversations 的 scope CHECK
+# 約束等語意，此處 SQLite 版刻意精簡，Postgres 專有語意由 tests/pg 覆蓋。
+_CONVERSATIONS_SQLITE_DDL = """
+CREATE TABLE conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL DEFAULT 'document',
+    title TEXT NOT NULL DEFAULT '新對話',
+    model TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+_MESSAGES_SQLITE_DDL = """
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    citations JSON NOT NULL DEFAULT '[]',
+    selection JSON,
+    token_usage JSON NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+
+@pytest.fixture(scope="function")
+async def conversations_messages_tables(
+    test_db: tuple[async_sessionmaker, create_async_engine],
+) -> tuple[async_sessionmaker, create_async_engine]:
+    """在 SQLite test_db 之上補建 conversations / messages 兩張表，回傳同樣的
+    (session_maker, engine) tuple。備份/還原測試以此取代各自手刻的 CREATE TABLE。
+    """
+    session_maker, engine = test_db
+    async with engine.begin() as conn:
+        await conn.execute(text(_CONVERSATIONS_SQLITE_DDL))
+        await conn.execute(text(_MESSAGES_SQLITE_DDL))
+    return session_maker, engine
+
+
 # 各模組以 `from app.db.session import SessionLocal` 匯入，綁定各自模組層級名稱；
 # 只 patch `app.db.session.SessionLocal` 不會反映到已匯入的名稱，需逐一 patch。
 _SESSION_LOCAL_MODULES = [
