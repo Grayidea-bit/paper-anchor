@@ -590,16 +590,22 @@ async def list_messages(session: AsyncSession, conv_id: int) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-async def get_chunks(session: AsyncSession, doc_id: int, limit: int = 500) -> list[dict]:
+async def get_chunks(session: AsyncSession, doc_id: int, limit: int | None = 500) -> list[dict]:
+    """`limit=None` 取全部 chunk（M14 reembed 需整篇重嵌，不受 500 上限截斷）。"""
+    params: dict[str, Any] = {"doc_id": doc_id}
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT :limit"
+        params["limit"] = limit
     rows = await session.execute(
         text(
-            """
+            f"""
             SELECT id, chunk_index, page, section, content, bbox_list
             FROM chunks WHERE document_id = :doc_id
-            ORDER BY chunk_index LIMIT :limit
+            ORDER BY chunk_index {limit_clause}
             """
         ),
-        {"doc_id": doc_id, "limit": limit},
+        params,
     )
     return [_row_to_dict(r) for r in rows]
 
@@ -680,6 +686,29 @@ async def dump_table_rows(session: AsyncSession, table: str) -> list[dict]:
     column_list = ", ".join(columns)
     rows = await session.execute(text(f"SELECT {column_list} FROM {table} ORDER BY id"))
     return [_normalize_dump_row(_row_to_dict(r)) for r in rows]
+
+
+async def dump_chunks(session: AsyncSession, doc_id: int) -> list[dict]:
+    """匯出單篇文獻的 chunks（含向量）供備份格式 v2（M14 D12 C）。
+
+    `embedding::text` 讀回 pgvector 的字面字串（如 `"[0.1,0.2,...]"`），與寫入端
+    `update_chunk_embeddings` 的 `CAST(:emb AS vector)` 對稱；上層 `backup.vector_to_b64`
+    再壓成 float32 base64。embedding 為 NULL（尚未嵌入）的 chunk 照出、`embedding` 欄為
+    `None`。**刻意不經 `dump_table_rows` 白名單**（chunks 走此專用路徑，`_DUMP_TABLE_COLUMNS`
+    仍拒絕 chunks，M15 漂移守護不受影響）。Postgres 專用（`::text` 語法；SQLite 測試層
+    以 monkeypatch 取代，見 tests/pg 與 tests/test_backup*.py）。
+    """
+    rows = await session.execute(
+        text(
+            """
+            SELECT id, chunk_index, page, section, content, bbox_list,
+                   embedding::text AS embedding
+            FROM chunks WHERE document_id = :doc_id ORDER BY chunk_index
+            """
+        ),
+        {"doc_id": doc_id},
+    )
+    return [_row_to_dict(r) for r in rows]
 
 
 # ---------- annotations ----------

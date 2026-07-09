@@ -18,6 +18,7 @@ from app.routers import (
     conversations,
     documents,
     glossary,
+    maintenance,
     projects,
 )
 from app.routers import (
@@ -92,6 +93,7 @@ app.include_router(projects.router)
 app.include_router(settings_router.router)
 app.include_router(tools_router.router)
 app.include_router(backup.router)
+app.include_router(maintenance.router)
 
 
 @app.exception_handler(AppError)

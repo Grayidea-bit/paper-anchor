@@ -224,6 +224,7 @@ _SESSION_LOCAL_MODULES = [
     "app.routers.projects",
     "app.services.digest",
     "app.services.ingest",
+    "app.services.reembed",
     "app.tools.keyword_search",
     "app.tools.list_annotations",
 ]
