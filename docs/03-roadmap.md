@@ -213,6 +213,28 @@
 
 - **DoD**：pytest（既有 SQLite 全套不退化 + 新 Postgres marker 測試層全過）+ `ruff check` + `docker compose exec web npm run build` 全綠；黑洞重現測試（ingest 中 `restart api` → 啟動後變 `failed` 可一鍵重新解析成功）；漂移守護自證（暫加假欄位 → Postgres 守護測試必 fail）；前端連接中關 modal → 重開 → 連接鈕可用；安全（區網另一台裝置連 5432/8000 應失敗或明確記錄僅本機）；引用鏈 eval_citations 不退化（或 Postgres 層等效覆蓋）。
 
+### M14 — 本地 Embedding + digest 分派 + 備份格式 v2
+
+> **編號雖是 14 但在 M15 之後執行**：M14 規劃於 M15 前，使用者決定先地基（M15）後執行本里程碑。計畫全文見 `docs/plans/M15-foundation-and-M14-deferred.md`（**下半部**）；架構全文見 `docs/02-architecture.md` D12。
+
+- **目標**：解使用者指出的架構債——**Claude 訂閱與 NVIDIA NIM 目前不是擇一關係**。即使對話切到 Claude 訂閱後端，仍有三處寫死依賴 NIM：ingest 的 chunk embedding、每次提問的 query embedding、digest 導讀生成（`digest.py` 直呼 `llm.chat`，繞過 `chat_backend` 分派）。Anthropic 無 embedding API，故補法是**內建本地 embedding 模型**（fastembed ONNX，1024 維，`embed_source` auto/nim/local 分派，收束於 `local_embed.py` 僅 `llm.py` 得 import）。順帶採納第二需求：**embedding 向量進雲端備份**（格式 v2），還原免重嵌免重解析、標註↔chunk 關聯不再丟失。三子項：A 本地 embedding／B digest 走 `chat_backend`（新增 `agent.chat_once`）／C 備份 v2（三路還原分派）。
+- **並行性**：T-DG-01 全程與 A/C 並行；T-EM-03（前端）與後端並行；T-M14-00 與 T-EM-00 並行。
+
+**任務卡（含模型分工）**
+
+- [ ] [opus] T-EM-00 **煙霧測試先行**（M7/M8 慣例）：容器內實測候選模型——fastembed 支援與 query prefix 核實、RAM 峰值／速度／維度、中英檢索品質 vs NIM spot check、wheel 體積；產出決策記錄（模型／變體／版本 pin／是否 `mem_limit`），落 D12 的 `LOCAL_EMBED_MODEL` 佔位。依賴：—
+- [x] [opus] T-M14-00 **文件先行**（鐵律 5）：02-architecture 新增 D12 節（M14 全文）+ §1 選型表 Embedding 列 + D5 補本地 passage/query 註記 + D10 settings 鍵表加 `embed_source` + §5 加 `POST /api/maintenance/reembed`／status operation 值域加 `reembed`／manifest v2 敘述；roadmap 開本 M14 節；CLAUDE.md 鐵律 3 補 `local_embed.py` 註記；`.env.example` 加 `EMBED_CACHE_DIR`（模型名可後補）。依賴：與 T-EM-00 並行
+- [ ] [sonnet] T-EM-01 **本地 embedding + llm 分派**：`local_embed.py`（懶載入單例 + `asyncio.to_thread` + 維度 assert + passage/query 前綴）+ `llm.py` 依 `embed_source` 分派 + `effective_embed_config()` + config/settings/compose `models:` volume + requirements（`fastembed`）；單元測試（懶載入、分派路由、維度 assert、auto 矩陣）。依賴：T-EM-00、T-M14-00
+- [ ] [sonnet] T-DG-01 **chat_once + digest 分派**：`agent.chat_once`（消費 `stream_chat` 事件，繼承分派/重試）+ `with_tools` 參數（`agent`/`claude_backend` 兩份，`chat_once` 傳 False）+ `digest.py` 改呼叫；測試遷移（含 Claude 風格回覆樣本，`extract_json` 容錯）。依賴：T-M14-00（**全程與 A/C 並行**）
+- [ ] [sonnet] T-EM-02 **reembed 維護動作**：`services/reembed.py`（逐文獻 `get_chunks`→`embed_passages`→`update_chunk_embeddings`）+ `routers/maintenance.py`（`POST /api/maintenance/reembed`）+ 沿用 backup `try_begin` 鎖（三方互斥）+ `operation:"reembed"` 進度；測試（互斥／進度／失敗續跑）。依賴：T-EM-01
+- [ ] [opus] T-BK2-01 **備份匯出 v2**：`repo.dump_chunks`（`embedding::text`）+ `chunks/{uuid}.json` 每文獻一檔 + base64 float32 LE codec + manifest v2（`format_version=2`/`counts.chunks`/`chunk_files`/取 `effective_embed_config`）+ 全量覆蓋；測試（roundtrip/snapshot，向量不進 `dump_table_rows` 白名單）。依賴：T-EM-01
+- [ ] [opus] T-BK2-02 **還原 v2 三路分派**：三路（直灌／重嵌／v1 全重建）+ chunk 插入提前 merge phase + `old_chunk_id→chunk_index→new_chunk_id` remap（annotations/glossary 加 optional `chunk_id`，v1 維持 NULL）+ failed 修復升級 + v1 相容（`not in (1,2)` 檢查）；`test_restore` 擴充（直灌斷言零 embed 呼叫、標註 `chunk_id` 非 NULL 等）。依賴：T-BK2-01
+- [ ] [sonnet] T-EM-03 **前端 embedding 設定**：embedding 來源 segmented（auto/nim/local）+ 切換警告文案 + 一鍵重建按鈕與進度（沿用備份進度條 `operation:"reembed"`）；`client.ts`/i18n。依賴：T-M14-00（與後端並行）
+- [ ] [haiku] T-M14-90 **README 本地模式說明**：首次下載需網路/RAM 需求/`models:` volume + `.env.example` 同步（`EMBED_CACHE_DIR`）+ roadmap 勾選。依賴：T-EM-01
+- [ ] [opus] T-M14-99 **整合驗證 + code review**：pytest/ruff/`npm run build` 全綠；**eval_citations 雙來源**（local/nim 各一輪，鐵律 1，15/15 基準不退化）；**「清空 DB → 匯入」E2E 一次測三路**（v2 直灌斷言零 embedding 呼叫 + chip 跳轉 + 標註 `chunk_id` 非 NULL／改 manifest 模型強制不符走重嵌／真 v1 舊備份相容）；reembed E2E；**純 Claude 零 NIM 情境驗收**（`.env` 拿掉 `EMBED_API_KEY` + `chat_backend=claude-sdk` → 上傳/提問/導讀/備份/還原全功能可用）；RAM 峰值觀測；本節其餘卡勾選。依賴：全部
+
+- **DoD**：pytest（既有不退化 + 新測試全過）+ `ruff check` + `docker compose exec web npm run build` 全綠；煙霧測試決策記錄落 D12（模型/RAM/速度數字）；**純 Claude 零 NIM 情境**上傳/提問/導讀/備份/還原全功能可用；**三路還原 E2E**（v2 直灌斷言零 embedding 呼叫 + chip 跳轉 + 標註 chunk_id 非 NULL／改 manifest 強制不符走重嵌／真 v1 舊備份相容）；同庫第二次匯入摘要全 0（冪等）；**eval_citations 雙來源**（local 與 nim 各一輪不退化）；reembed E2E；D12 規格與實作一致。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

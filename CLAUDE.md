@@ -13,7 +13,7 @@
 
 1. **引用錨點是產品靈魂**：任何改動不得破壞 chunk 的 `page`/`bbox_list` 資訊鏈（解析 → 入庫 → RAG → SSE → 前端高亮）。改動相關程式碼必須跑引用命中測試。
 2. **不引入 LangChain / LlamaIndex**：RAG 流程手寫，保持可控。
-3. **LLM 供應商存取僅限 `backend/app/llm.py`、`backend/app/services/agent.py`（Pydantic AI / OpenAI）與 `backend/app/services/claude_backend.py`（Claude Agent SDK / 訂閱額度）**：不得在其他模組直接打供應商 API。OpenAI 供應商設定經 `llm._chat_config()`（settings 執行期覆蓋 > .env）；Claude 後端由 `settings_store` 的 `chat_backend` 分派（入口仍是 `services/agent.py`）。給 LLM 用的工具放 `app/tools/`（複製 template_tool.py 新增）。
+3. **LLM 供應商存取僅限 `backend/app/llm.py`、`backend/app/services/agent.py`（Pydantic AI / OpenAI）與 `backend/app/services/claude_backend.py`（Claude Agent SDK / 訂閱額度）**：不得在其他模組直接打供應商 API。OpenAI 供應商設定經 `llm._chat_config()`（settings 執行期覆蓋 > .env）；Claude 後端由 `settings_store` 的 `chat_backend` 分派（入口仍是 `services/agent.py`）。本地 embedding 推論收束於 `backend/app/local_embed.py`，僅 `llm.py` 得 import（M14；`embed_source` 分派見 `docs/02-architecture.md` D12）。給 LLM 用的工具放 `app/tools/`（複製 template_tool.py 新增）。
 4. **Prompt 一律放 `backend/app/prompts/*.md`**：不得散落在程式碼字串裡。
 5. **API 回應格式遵守 `docs/02-architecture.md` §5**：要改介面先改文件，並在任務卡註明 breaking change。
 6. **秘密不入庫**：API key 只放 `.env`（已在 .gitignore）；`.env.example` 保持同步。
