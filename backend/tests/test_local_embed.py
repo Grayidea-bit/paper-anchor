@@ -5,6 +5,7 @@
 `local_embed.py` 只在函式內 import 它，故本檔全程不會真的 `import fastembed`。
 """
 
+import json
 import sys
 import types
 
@@ -290,3 +291,28 @@ class TestEmbedLocal:
 
         with pytest.raises(llm.LLMError):
             await local_embed.embed_local(["x"], "passage")
+
+    async def test_embed_local_coerces_numpy_scalars_to_python_float(self, monkeypatch):
+        """真環境回歸（M14 T-M14-99 清庫 E2E 抓到）：fastembed 回 numpy float32，
+        不逐值轉 float 會讓下游 update_chunk_embeddings 的 json.dumps 直接炸
+        （TypeError: Object of type float32 is not JSON serializable）。
+        以自訂 __float__ 型別模擬 np.float32（主機測試環境無 numpy）。
+        """
+
+        class _F32:  # 模擬 numpy float32：可轉 float、但不是 float、json 序列化不了
+            def __init__(self, v):
+                self._v = v
+
+            def __float__(self):
+                return self._v
+
+        class _NumpyishTextEmbedding(_FakeTextEmbedding):
+            def embed(self, texts, batch_size):
+                return [[_F32(0.1)] * local_embed.LOCAL_EMBED_DIM for _ in texts]
+
+        _install_fake_fastembed(monkeypatch, text_embedding_cls=_NumpyishTextEmbedding)
+
+        result = await local_embed.embed_local(["x"], "passage")
+
+        assert all(type(v) is float for vec in result for v in vec)
+        json.dumps(result[0])  # 下游序列化路徑不炸

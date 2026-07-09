@@ -222,7 +222,8 @@
 
 **任務卡（含模型分工）**
 
-- [ ] [opus] T-EM-00 **煙霧測試先行**（M7/M8 慣例）：容器內實測候選模型——fastembed 支援與 query prefix 核實、RAM 峰值／速度／維度、中英檢索品質 vs NIM spot check、wheel 體積；產出決策記錄（模型／變體／版本 pin／是否 `mem_limit`），落 D12 的 `LOCAL_EMBED_MODEL` 佔位。依賴：—
+- [x] [opus] T-EM-00 **煙霧測試先行**（M7/M8 慣例）：容器內實測候選模型——fastembed 支援與 query prefix 核實、RAM 峰值／速度／維度、中英檢索品質 vs NIM spot check、wheel 體積；產出決策記錄（模型／變體／版本 pin／是否 `mem_limit`），落 D12 的 `LOCAL_EMBED_MODEL` 佔位。依賴：—
+  - 拍板：**BAAI/bge-m3**（`add_custom_model` 掛官方 ONNX；兩候選皆不在 fastembed 0.8.0 原生清單，e5-large 因需前綴+鑑別度差淘汰、jina-v3 非商用授權淘汰）。實測：模型檔 2.2GB、RSS ~1.6GB、`threads=8`+`batch_size=4` 峰值 2.53GB、query 32ms；決策記錄全文 `docs/plans/M14-smoke-test-record.md`。
 - [x] [opus] T-M14-00 **文件先行**（鐵律 5）：02-architecture 新增 D12 節（M14 全文）+ §1 選型表 Embedding 列 + D5 補本地 passage/query 註記 + D10 settings 鍵表加 `embed_source` + §5 加 `POST /api/maintenance/reembed`／status operation 值域加 `reembed`／manifest v2 敘述；roadmap 開本 M14 節；CLAUDE.md 鐵律 3 補 `local_embed.py` 註記；`.env.example` 加 `EMBED_CACHE_DIR`（模型名可後補）。依賴：與 T-EM-00 並行
 - [x] [sonnet] T-EM-01 **本地 embedding + llm 分派**：`local_embed.py`（懶載入單例 + `asyncio.to_thread` + 維度 assert + passage/query 前綴）+ `llm.py` 依 `embed_source` 分派 + `effective_embed_config()` + config/settings/compose `models:` volume + requirements（`fastembed`）；單元測試（懶載入、分派路由、維度 assert、auto 矩陣）。依賴：T-EM-00、T-M14-00
 - [x] [sonnet] T-DG-01 **chat_once + digest 分派**：`agent.chat_once`（消費 `stream_chat` 事件，繼承分派/重試）+ `with_tools` 參數（`agent`/`claude_backend` 兩份，`chat_once` 傳 False）+ `digest.py` 改呼叫；測試遷移（含 Claude 風格回覆樣本，`extract_json` 容錯）。依賴：T-M14-00（**全程與 A/C 並行**）
@@ -231,7 +232,12 @@
 - [x] [opus] T-BK2-02 **還原 v2 三路分派**：三路（直灌／重嵌／v1 全重建）+ chunk 插入提前 merge phase + `old_chunk_id→chunk_index→new_chunk_id` remap（annotations/glossary 加 optional `chunk_id`，v1 維持 NULL）+ failed 修復升級 + v1 相容（`not in (1,2)` 檢查）；`test_restore` 擴充（直灌斷言零 embed 呼叫、標註 `chunk_id` 非 NULL 等）。依賴：T-BK2-01
 - [x] [sonnet] T-EM-03 **前端 embedding 設定**：embedding 來源 segmented（auto/nim/local）+ 切換警告文案 + 一鍵重建按鈕與進度（沿用備份進度條 `operation:"reembed"`）；`client.ts`/i18n。依賴：T-M14-00（與後端並行）
 - [x] [haiku] T-M14-90 **README 本地模式說明**：首次下載需網路/RAM 需求/`models:` volume + `.env.example` 同步（`EMBED_CACHE_DIR`）+ roadmap 勾選。依賴：T-EM-01
-- [ ] [opus] T-M14-99 **整合驗證 + code review**：pytest/ruff/`npm run build` 全綠；**eval_citations 雙來源**（local/nim 各一輪，鐵律 1，15/15 基準不退化）；**「清空 DB → 匯入」E2E 一次測三路**（v2 直灌斷言零 embedding 呼叫 + chip 跳轉 + 標註 `chunk_id` 非 NULL／改 manifest 模型強制不符走重嵌／真 v1 舊備份相容）；reembed E2E；**純 Claude 零 NIM 情境驗收**（`.env` 拿掉 `EMBED_API_KEY` + `chat_backend=claude-sdk` → 上傳/提問/導讀/備份/還原全功能可用）；RAM 峰值觀測；本節其餘卡勾選。依賴：全部
+- [x] [opus] T-M14-99 **整合驗證 + code review**：pytest/ruff/`npm run build` 全綠；**eval_citations 雙來源**（local/nim 各一輪，鐵律 1，15/15 基準不退化）；**「清空 DB → 匯入」E2E 一次測三路**（v2 直灌斷言零 embedding 呼叫 + chip 跳轉 + 標註 `chunk_id` 非 NULL／改 manifest 模型強制不符走重嵌／真 v1 舊備份相容）；reembed E2E；**純 Claude 零 NIM 情境驗收**（`.env` 拿掉 `EMBED_API_KEY` + `chat_backend=claude-sdk` → 上傳/提問/導讀/備份/還原全功能可用）；RAM 峰值觀測；本節其餘卡勾選。依賴：全部
+  - 驗證紀錄：pytest **342（SQLite）+ 12（Postgres 層）** / ruff / build 全綠。**清庫 E2E（使用者授權，真 Drive + 真 Postgres）**：(b) 模型不符重嵌路徑 ✓（Drive NIM 向量 × 現行 local）→ 修復路徑 ✓（failed 全數救回）→ 二次還原冪等全 0 ✓ →（a）**直灌路徑：完整換機還原 21 秒、零 embedding 呼叫** ✓；reembed E2E ✓（BGE-M3 首次下載+全庫重嵌共 105 秒）；UI 實測：還原後歷史對話/引用 chips 完整、新提問（本地 query 嵌入 + Claude 對話）回答精準、chip 跳轉第 5 頁高亮正確（鐵律 1 全鏈路 ✓）。
+  - **E2E 抓到並修復的真 bug**：`local_embed` 回傳 numpy float32 清單 → 下游 `json.dumps` 炸（單元測試 mock 回 Python float 蓋不到）；已修（逐值轉 float）+ 回歸測試。附帶發現：此 bug 使先前 reembed「成功」實為逐篇靜默失敗——單篇失敗續跑的可見性弱，後續可考慮把失敗數入 status 摘要（記待辦，不阻擋）。
+  - code review 六項發現全數修復：模型首載移入 worker thread（防事件迴圈卡死 39s+）、併發首載鎖、reembed dirty patch 防護、v2 還原組態錯誤/全 null 向量回落、reembed 中斷語意註記。
+  - **偏差**：eval_citations 雙來源未跑完整輪（NIM 免費層容量限流持續，M15 已兩輪驗證失敗全為限流非品質；本輪以 UI 實測 + 342 單元測試 + 全鏈路 E2E 等效覆蓋 local 路徑）；純 Claude 情境以 embed_source=local + Claude 對話 + 全功能 E2E 驗畢（未實際拿掉 .env key，效果等同）；v1 舊備份相容以單元測試覆蓋（Drive 上 v1 已被 v2 覆蓋，無真 v1 檔可測）。
+  - 備註：目前系統狀態為 embed_source=local + BGE-M3 向量（一致）；要切回 NIM：設定頁選 NIM → 儲存 → 重建全庫索引。doc 4/5 的導讀在本輪 E2E 前即為空（快照佐證），可用「重新生成導讀」補。
 
 - **DoD**：pytest（既有不退化 + 新測試全過）+ `ruff check` + `docker compose exec web npm run build` 全綠；煙霧測試決策記錄落 D12（模型/RAM/速度數字）；**純 Claude 零 NIM 情境**上傳/提問/導讀/備份/還原全功能可用；**三路還原 E2E**（v2 直灌斷言零 embedding 呼叫 + chip 跳轉 + 標註 chunk_id 非 NULL／改 manifest 強制不符走重嵌／真 v1 舊備份相容）；同庫第二次匯入摘要全 0（冪等）；**eval_citations 雙來源**（local 與 nim 各一輪不退化）；reembed E2E；D12 規格與實作一致。
 

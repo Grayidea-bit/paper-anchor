@@ -94,7 +94,10 @@ async def embed_local(texts: list[str], input_type: str) -> list[list[float]]:
 
     def _run() -> list[list[float]]:
         model = _get_model()  # 首載/下載都在 worker thread，事件迴圈不卡
-        return [list(vec) for vec in model.embed(texts, batch_size=_BATCH_SIZE)]
+        # 逐值轉 Python float：fastembed 回 numpy float32，直接 list() 會是
+        # np.float32 清單，下游 json.dumps（update_chunk_embeddings）序列化直接炸
+        # ——單元測試 mock 回 Python float 抓不到，真環境 E2E 才炸（M14 T-M14-99）。
+        return [[float(x) for x in vec] for vec in model.embed(texts, batch_size=_BATCH_SIZE)]
 
     vectors = await asyncio.to_thread(_run)
     for vec in vectors:
