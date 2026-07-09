@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
@@ -26,6 +27,8 @@ from app.routers import (
 )
 from app.services.backup_scheduler import scheduler_loop
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -33,6 +36,15 @@ async def lifespan(_: FastAPI):
         await settings_store.ensure_loaded()
     except Exception:
         pass  # DB 未就緒時延後到第一次 API 呼叫
+    try:
+        # 啟動時自癒（M15 T-FD-01 / D4）：上一輪被中斷的 ingest（parsing/embedding）轉 failed，
+        # 使其可經 /reingest 端點救回而非永久卡住。DB 未就緒時容錯略過（同上）。
+        async with SessionLocal() as session:
+            n = await repo.reconcile_interrupted_ingests(session)
+        if n:
+            logger.warning("lifespan: reconciled %d interrupted ingest(s) to failed", n)
+    except Exception:
+        pass
     task = asyncio.create_task(scheduler_loop())
     try:
         yield

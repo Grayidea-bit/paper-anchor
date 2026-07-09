@@ -164,6 +164,26 @@ async def set_document_status(
     await session.commit()
 
 
+async def reconcile_interrupted_ingests(session: AsyncSession) -> int:
+    """啟動時自癒（M15 T-FD-01 / D4）：把卡在 transient ingest 狀態的文獻轉 failed。
+
+    程序被殺（重啟／OOM／`--reload`）會讓 ingest 中途文獻永久卡在 parsing/embedding
+    ——這類非終態前端會永遠顯示處理中且無重試入口。lifespan 啟動時視為「上一輪被中斷」，
+    一律重置為 failed（帶可讀 error_msg），使其可經 reingest 端點救回。回傳受影響筆數。
+    """
+    result = await session.execute(
+        text(
+            """
+            UPDATE documents SET status = 'failed',
+                error_msg = '處理中斷（伺服器重啟），請重新解析'
+            WHERE status IN ('parsing', 'embedding')
+            """
+        )
+    )
+    await session.commit()
+    return result.rowcount or 0
+
+
 async def set_document_parsed(
     session: AsyncSession, doc_id: int, title: str, page_count: int
 ) -> None:

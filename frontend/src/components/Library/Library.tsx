@@ -8,6 +8,7 @@ import {
   getUsage,
   listDocuments,
   listProjects,
+  reingestDocument,
   renameProject,
   uploadDocument,
   type Doc,
@@ -236,6 +237,7 @@ export function Library() {
               onOpen={() => openDocument(d.id)}
               onAssign={(pid) => act(() => assignProject(d.id, pid))}
               onDelete={() => act(() => deleteDocument(d.id))}
+              onReingest={() => act(() => reingestDocument(d.id))}
             />
           ))}
           {shownDocs.length === 0 && (
@@ -255,12 +257,14 @@ function DocRow({
   onOpen,
   onAssign,
   onDelete,
+  onReingest,
 }: {
   doc: Doc;
   projects: Project[];
   onOpen: () => void;
   onAssign: (projectId: number | null) => void;
   onDelete: () => void;
+  onReingest: () => void;
 }) {
   const t = useT();
   const statusLabel = t[`status_${doc.status}` as const];
@@ -278,6 +282,11 @@ function DocRow({
         {statusLabel}
         {doc.status === "failed" && doc.error_msg ? ` · ${doc.error_msg.slice(0, 24)}` : ""}
       </span>
+      {doc.status === "failed" && (
+        <button className={styles.textBtn} title={t.reingestTitle} onClick={onReingest}>
+          {t.reingest}
+        </button>
+      )}
       <select
         className={styles.projectSelect}
         value={doc.project_id ?? ""}

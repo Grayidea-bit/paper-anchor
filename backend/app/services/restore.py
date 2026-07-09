@@ -197,8 +197,9 @@ async def _merge_documents(
 ) -> dict[int, int]:
     """依 PDF UUID 檔名（file_path basename）簽章處理文獻，回傳 {dump_doc_id: local_id}。
 
-    - 已存在（UUID 命中本地）：remap，整篇跳過；本地 status='failed' → delete_chunks 後排入
-      重嵌（重跑即修復，D11）。
+    - 已存在（UUID 命中本地）：remap，整篇跳過；本地 status 為 failed 或 transient 殘態
+      （parsing/embedding，程序中途被殺留下的半殘狀態，見 M15 T-FD-01）→ delete_chunks
+      後排入重嵌（重跑即修復，D11）。
     - 不存在：遠端 pdfs/ 有對應檔才是新文獻——下載 PDF → restore_insert_document → 排入
       ingest（run_digest = dump 無 digest）；遠端缺 PDF 整篇跳過記 documents_skipped。
     """
@@ -219,8 +220,9 @@ async def _merge_documents(
         local = local_by_uuid.get(uuid_name)
         if local is not None:
             remap[d["id"]] = local["id"]
-            if local.get("status") == "failed":
-                # 修復路徑：清殘塊後重嵌（保留使用者本地標註，故不刪文獻本身）。
+            if local.get("status") in ("failed", "parsing", "embedding"):
+                # 修復路徑：failed 或 transient 殘態皆清殘塊後重嵌
+                # （保留使用者本地標註，故不刪文獻本身）。
                 await repo.delete_chunks(session, local["id"])
                 ingest_jobs.append((local["id"], True, title))
             continue

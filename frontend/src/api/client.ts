@@ -277,6 +277,12 @@ export function deleteDocument(id: number): Promise<void> {
   return request<void>(`/api/documents/${id}`, { method: "DELETE" });
 }
 
+/** 重新解析文獻（M15 T-FD-01）：清舊 chunks 重跑 ingest → 202。
+ * 文獻不存在 404；已在處理中或全域 backup/restore 進行中 409 operation_running（見 ApiError.code）。 */
+export function reingestDocument(id: number): Promise<Doc> {
+  return request<Doc>(`/api/documents/${id}/reingest`, { method: "POST" });
+}
+
 export function getChunks(id: number, limit = 500): Promise<Chunk[]> {
   return request<Chunk[]>(`/api/documents/${id}/chunks?limit=${limit}`);
 }
@@ -446,7 +452,15 @@ export async function streamMessage(
       else if (line.startsWith("data:")) data += line.slice(5).trim();
     }
     if (!event || !data) return;
-    const payload = JSON.parse(data);
+    let payload;
+    try {
+      payload = JSON.parse(data);
+    } catch (e) {
+      // 單一 SSE frame 壞掉不該讓整條串流被外層當成連線錯誤中止：
+      // 記警告、跳過這個 frame，串流繼續處理後續事件。
+      console.warn("Failed to parse SSE frame, skipping:", event, e);
+      return;
+    }
     if (event === "token") handlers.onToken(payload.text as string);
     else if (event === "reasoning") handlers.onReasoning?.(payload.text as string);
     else if (event === "tool") handlers.onTool?.(payload as ToolEvent);

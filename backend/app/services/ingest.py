@@ -114,6 +114,10 @@ async def ingest_document(doc_id: int, run_digest: bool = True) -> None:
             return
         try:
             await repo.set_document_status(session, doc_id, "parsing")
+            # 冪等保障（M15 T-FD-01）：任何重跑（reingest 端點、restore 修復、啟動重置後
+            # 手動重試）都先清舊 chunks，避免撞 UNIQUE(document_id, chunk_index) 或留下
+            # 新舊 chunk 混雜的半殘狀態。
+            await repo.delete_chunks(session, doc_id)
             title, page_count, chunks = await asyncio.to_thread(parse_pdf, doc["file_path"])
             await repo.set_document_parsed(session, doc_id, title, page_count)
             chunk_ids = await repo.insert_chunks(session, doc_id, chunks)

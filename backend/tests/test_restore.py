@@ -104,41 +104,11 @@ class FakeIngest:
 
 
 @pytest.fixture
-async def restore_env(test_db, tmp_path, monkeypatch):
-    """補 conversations/messages 表、接管 SessionLocal/settings/gdrive/ingest/upload_dir。"""
-    session_maker, engine = test_db
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE conversations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
-                    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
-                    scope TEXT NOT NULL DEFAULT 'document',
-                    title TEXT NOT NULL DEFAULT '新對話',
-                    model TEXT,
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-                    content TEXT NOT NULL,
-                    citations JSON NOT NULL DEFAULT '[]',
-                    selection JSON,
-                    token_usage JSON NOT NULL DEFAULT '{}',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-        )
+async def restore_env(conversations_messages_tables, tmp_path, monkeypatch):
+    """conversations/messages 表由 conftest 共用 fixture 建立；
+    這裡接管 SessionLocal/settings/gdrive/ingest/upload_dir。
+    """
+    session_maker, _ = conversations_messages_tables
 
     monkeypatch.setattr(restore, "SessionLocal", session_maker)
     monkeypatch.setattr(
@@ -715,6 +685,50 @@ async def test_failed_doc_repair_path(restore_env):
     )
     assert doc_id in [c[0] for c in env.ingest.calls]
     # 非新文獻
+    assert backup._last_restore["summary"]["documents_new"] == 0
+
+
+@pytest.mark.asyncio
+async def test_transient_doc_repair_path(restore_env):
+    """M15 T-FD-01：本地文獻卡在 parsing/embedding（程序中途被殺留下的殘態）同樣視為
+    需修復，不只 failed——修復路徑一致：delete_chunks 後排入重嵌。"""
+    env = restore_env
+    async with env.session_maker() as s:
+        doc_id = (
+            await s.execute(
+                text(
+                    """
+                    INSERT INTO documents (user_id, title, filename, file_path, page_count, status)
+                    VALUES (1, 'Stuck', 'paper.pdf', '/data/uploads/uuidB.pdf', 3, 'embedding')
+                    RETURNING id
+                    """
+                )
+            )
+        ).scalar()
+        await s.execute(
+            text(
+                """
+                INSERT INTO chunks (document_id, chunk_index, page, content, bbox_list)
+                VALUES (:d, 0, 1, 'half-embedded', '[]')
+                """
+            ),
+            {"d": doc_id},
+        )
+        await s.commit()
+
+    dumps = _empty_dumps()
+    dumps["documents"] = [_doc(802, file_path="/data/uploads/uuidB.pdf", title="Paper B")]
+    await env.drive.push_backup(dumps=dumps, pdfs={})  # 已存在，走修復不需遠端 PDF
+
+    await restore.run_restore()
+
+    assert (
+        await _count(
+            env.session_maker, "SELECT COUNT(*) FROM chunks WHERE document_id = :d", {"d": doc_id}
+        )
+        == 0
+    )
+    assert doc_id in [c[0] for c in env.ingest.calls]
     assert backup._last_restore["summary"]["documents_new"] == 0
 
 

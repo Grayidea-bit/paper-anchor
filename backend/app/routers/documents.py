@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.db import repo
 from app.db.session import SessionLocal
 from app.errors import AppError, NotFoundError
+from app.services import backup
 from app.services.digest import generate_digest
 from app.services.ingest import ingest_document
 
@@ -117,6 +118,27 @@ async def regenerate_digest(
         raise AppError("not_ready", "文獻尚未處理完成")
     background_tasks.add_task(generate_digest, doc_id, language)
     return {"status": "digesting"}
+
+
+@router.post("/{doc_id}/reingest", status_code=202)
+async def reingest_document(doc_id: int, background_tasks: BackgroundTasks) -> dict:
+    """重新解析文獻（M15 T-FD-01 / D4）：清舊 chunks 重跑 ingest_document。
+
+    文獻不存在 → 404。該文獻已在 ingest 中（status parsing/embedding，ingest 無全域鎖，
+    靠文獻 status 判斷）或全域 backup/restore 進行中 → 409 `operation_running`（避免與
+    還原互踩）。否則把 status 重置為 parsing（順帶清掉舊 error_msg）並排入背景 ingest。
+    """
+    async with SessionLocal() as session:
+        doc = await repo.get_document(session, doc_id)
+        if doc is None:
+            raise NotFoundError("document", doc_id)
+        if doc["status"] in ("parsing", "embedding") or backup.is_running():
+            raise AppError("operation_running", "已有處理中的操作，請稍後再試", status=409)
+        await repo.set_document_status(session, doc_id, "parsing")
+        doc = await repo.get_document(session, doc_id)
+    doc.pop("file_path", None)
+    background_tasks.add_task(ingest_document, doc_id)
+    return doc
 
 
 @router.delete("/{doc_id}", status_code=204)
