@@ -33,8 +33,10 @@ logger = logging.getLogger(__name__)
 HISTORY_LIMIT = 10
 _MAX_ATTEMPTS = 3
 # max_turns：模型↔工具的 agentic 迴圈上限。RAG 情境 context 已在 system prompt，
-# 但推理模型常額外多輪 keyword_search 佐證；給足額度避免未收斂就 error_max_turns。
-_MAX_TURNS = 8
+# 但推理模型常額外多輪 keyword_search 佐證；8 實測對複雜提問仍不足（新對話反覆
+# error_max_turns），提高到 16 作為「防失控」的硬上限而非常態邊界。
+# 搭配下方 error_max_turns 特判：已有可見輸出時優雅收尾，不把完整答案打成錯誤。
+_MAX_TURNS = 16
 # session 檔/CLAUDE_CONFIG_DIR 進容器暫存目錄（不污染）
 _CONFIG_DIR = "/tmp/claude-anchor"
 _CWD = "/tmp/claude-anchor"
@@ -187,9 +189,23 @@ async def stream_chat(
                 if isinstance(msg, ResultMessage):
                     for _ in range(max(1, msg.num_turns)):
                         _record_request()
-                    if msg.subtype != "success":
+                    if msg.subtype == "error_max_turns" and visible:
+                        # 迴圈在 _MAX_TURNS 觸頂，但答案文字已串流給前端——此時 raise 只會
+                        # 把（多半已完整的）回答打成 SSE error、不入庫，逼使用者重試再燒一輪
+                        # 額度。改為優雅收尾：記警告、照常回 usage，讓回答正常入庫。
+                        logger.warning(
+                            "claude backend hit max_turns (%s) after visible output; "
+                            "finishing gracefully",
+                            _MAX_TURNS,
+                        )
+                    elif msg.subtype != "success":
                         status = msg.api_error_status
                         extra = f", status={status}" if status else ""
+                        if msg.subtype == "error_max_turns":
+                            raise LLMError(
+                                "回答未在工具呼叫輪次上限內收斂（error_max_turns）："
+                                "請重試或簡化提問"
+                            )
                         raise LLMError(f"Claude 後端執行失敗（subtype={msg.subtype}{extra}）")
                     usage = msg.usage or {}
                     yield {

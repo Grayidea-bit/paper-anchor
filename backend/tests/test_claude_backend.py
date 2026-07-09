@@ -293,6 +293,30 @@ class TestErrorPaths:
         with pytest.raises(LLMError, match="error_max_turns"):
             await collect(monkeypatch, messages)
 
+    async def test_max_turns_with_visible_output_finishes_gracefully(self, monkeypatch, no_tools):
+        """error_max_turns 但答案已串流（visible）→ 不 raise、照常回 usage（M15 修正）。
+
+        修正前：raise 會把已完整輸出的回答打成 SSE error、不入庫，使用者重試再燒一輪額度。
+        """
+        messages = [
+            _text_delta("答案本體"),
+            _result_message(
+                subtype="error_max_turns", usage={"input_tokens": 5, "output_tokens": 9}
+            ),
+        ]
+        events = await collect(monkeypatch, messages)
+        kinds = [e["type"] for e in events]
+        assert "token" in kinds
+        usage = next(e for e in events if e["type"] == "usage")
+        assert usage["prompt_tokens"] == 5
+        assert usage["completion_tokens"] == 9
+
+    async def test_max_turns_without_output_raises_actionable_message(self, monkeypatch, no_tools):
+        """error_max_turns 且無任何可見輸出 → 錯誤訊息要可行動（重試/簡化提問）。"""
+        messages = [_result_message(subtype="error_max_turns")]
+        with pytest.raises(LLMError, match="重試或簡化提問"):
+            await collect(monkeypatch, messages)
+
     async def test_result_subtype_error_includes_status(self, monkeypatch, no_tools):
         messages = [_result_message(subtype="error_during_execution", api_error_status=529)]
         with pytest.raises(LLMError, match="529"):
