@@ -177,6 +177,38 @@
   - E2E 執行紀錄：同庫還原（真 Postgres + 真 Drive）第二次匯入摘要全 0（冪等 ✓）、失敗中斷 transaction 完整回滾無殘留 ✓、UI 三階段進度條/確認框/摘要渲染 ✓、六分類切換/dirty 圓點 ✓。**未跑**：全新 DB 完整還原（需清空現庫，留使用者自選時機）；eval_citations（NIM key 未設、跑 Claude 後端會耗訂閱額度——ingest 預設路徑零改動已由審查與全套測試確認，風險低）。
 - **DoD**：pytest（既有不退化 + test_restore 全過）+ ruff + `npm run build` 全綠；`eval_citations` 不退化；真帳號還原 E2E 全過；D11 規格與實作一致。
 
+### M15 — 地基強化 / Foundation Hardening（進行中，2026-07-09 起）
+
+- **目標**：系統仍在開發期，M12/M13 的備份還原偏「蓋房子」，先回頭鞏固地基。三路 Opus 全系統審查（資料層地基／服務層／前端）結論——**地基整體穩健**（SQL 注入面乾淨、秘密遮罩完整、引用鏈完好、XSS 無可乘之機、備份原子性論證成立），但有**三個高嚴重度缺陷**與一批「隨庫成長會惡化」的中等問題須修：
+  1. **文獻黑洞 Ingest black hole**：ingest 中途程序被殺（重啟/OOM/`--reload`）→ 文獻永久卡 `parsing`/`embedding`，無重試入口；restore 修復只認 `failed` 救不了它；`insert_chunks` 不冪等使半殘狀態無法重跑。
+  2. **備份 schema 漂移無守護 Backup column-drift unguarded**：`repo._DUMP_TABLE_COLUMNS` 白名單 vs 實際 schema 無測試比對——未來 migration 加欄位，備份靜默漏、還原永遠救不回；核心 Postgres 語意（TIMESTAMPTZ/JSONB/vector/CHECK）零整合測試覆蓋，SQLite 替身已漏過一次 datetime bug（M13）。
+  3. **前端連接卡死 Connect deadlock**：OAuth 進行中關閉設定視窗 → `backupStore.loading` 永遠 true（module 級單例 + interval 被清），重開後「連接」永久 disabled。
+- 計畫全文：`docs/plans/M15-foundation-and-M14-deferred.md`（上半部）。
+- 並行性：T-FD-01/03/05/07 互不重疊可與 T-FD-02 並行；T-FD-04 獨立；T-FD-06 等 02。
+
+**任務卡（含模型分工）**
+
+- [x] [opus] T-FD-00 **文件先行**（鐵律 5）：§5 加 `POST /api/documents/{id}/reingest`（202／404／409）；02-architecture 補「單 process 部署假設」與「預設信任網段」小節、D4 補啟動 reconciliation 與 ingest 冪等、§4 的「刻意未建 ANN 索引」註記更新（僅 document scope 成立、library/project 為全庫精確掃描、chunk 破 ~2 萬應建 HNSW/ivfflat）；roadmap 開 M15 各卡。依賴：—
+- [ ] [sonnet] T-FD-01 **ingest 冪等與自癒**：`ingest_document` 開頭無條件 `delete_chunks`（廉價換冪等）；lifespan 啟動 reconciliation（`parsing/embedding` 殘態 → `failed` + error_msg）；新端點 `POST /api/documents/{id}/reingest`（409 若在跑）+ 前端 failed 文獻「重新解析」按鈕；restore 修復範圍擴及 transient 狀態。測試：崩潰殘態重置、重跑不撞 UNIQUE、reingest 端點。依賴：T-FD-00
+- [ ] [opus] T-FD-02 **Postgres 整合測試層 + 漂移守護**：薄 Postgres 測試層（用 compose 的 db 或 testcontainers，跑真 migration，消滅 4 份手刻 DDL 副本）；覆蓋 `information_schema` vs `_DUMP_TABLE_COLUMNS` 欄位守護（新欄位必須顯式決定備份或忽略）、`similar_chunks_scoped`（vector `<=>`）、`total_token_usage`（JSONB）、backup dump→restore 往返、scope CHECK、TIMESTAMPTZ；標記為獨立 pytest marker（無 Postgres 時 skip）。依賴：T-FD-00
+- [ ] [sonnet] T-FD-03 **前端正確性批次**：connect loading 卡死（`stopPolling` 重置 loading）；mid-stream 錯誤後 retry 產生重複提問（剝除失敗組再重送）；SSE 壞 frame 殺整條流（`JSON.parse` 包 try/catch 略過）；backup/restore 間 error 殘留清除。依賴：—
+- [ ] [opus] T-FD-04 **安全批次**（安全敏感，不下放）：compose 埠綁定改 `127.0.0.1`（db 拿掉對外埠）+ db 強密碼；無 body 的 state-changing 端點強制 `application/json`（堵跨站 form POST 觸發 restore/disconnect）；lifespan 偵測多 worker 即警告（鎖與快取為 per-process）；README 部署假設註記。依賴：T-FD-00
+- [ ] [sonnet] T-FD-05 **前端串流/記憶體效能**：訊息抽 `React.memo` 子元件（token 串流不再重算全列表 markdown）；捲動改「在底部附近才自動跟隨」+ 串流中 `auto` 行為；PDF canvas 離開可視範圍回收（保留佔位高度）+ 換文獻 `key={documentId}` 重建；scroll handler rAF 節流。依賴：—
+- [ ] [sonnet] T-FD-06 **後端寫入效能**：`insert_chunks` 改單條多列 INSERT、`update_chunk_embeddings` 改 executemany/VALUES JOIN（消 N+1 round-trip）；restore 的 Drive 下載移出 DB session（先下載後開 session，比照 backup 慣例）；migration 補 `annotations.chunk_id`/`glossary_entries.chunk_id` 兩個 FK 索引。依賴：T-FD-02（用其測試層驗證）
+- [ ] [sonnet] T-FD-07 **工具 schema 對齊**：`tools/_input_schema` 解析 docstring Args 段補齊 per-param description/required/預設值，消除 Claude 後端工具品質劣化；兩後端 schema 一致性測試。依賴：—
+- [ ] [haiku] T-FD-08 **記帳清理批次**：死 i18n 鍵刪除；aria-label 入 i18n；prompt 載入 assert 佔位符存在；`parse_citations` 正則放寬對齊文件（或改文件）；`similar_chunks_scoped` 單篇分支補 `status='ready'`；digest `_select_chunks` O(n²) 改 set；`APP_VERSION` 單一來源；`.env.example` 同步檢查。依賴：T-FD-01～07 後
+- [ ] [opus] T-FD-99 **整合驗證**：pytest（SQLite + 新 Postgres 層）/ruff/npm build 全綠；瀏覽器實測（connect 卡死重現路徑修復、串流長回答捲動、failed 文獻重新解析、100 頁文獻記憶體觀測）；引用鏈回歸（動了 ingest/insert_chunks，跑 eval_citations 或以 Postgres 層等效覆蓋）；roadmap 勾選。依賴：全部
+
+**明確不做（審查建議但擱置）Deferred**：
+
+- **HNSW/ivfflat 向量索引**：門檻未到（chunk 總數未破 ~2 萬），記為門檻卡，屆時再評估（見 02-architecture §4 註記）。
+- **`repo.py` 拆檔**：可讀性尚可，不為拆而拆。
+- **usage 端點快取**：現況成本可接受。
+- **Library `prompt()` 改 popover**：UX 小優化，非地基問題。
+- **Claude 後端歷史保真度**：SDK 固有限制（無法完整還原多輪工具歷史），以程式碼註解記錄，不強行繞。
+
+- **DoD**：pytest（既有 SQLite 全套不退化 + 新 Postgres marker 測試層全過）+ `ruff check` + `docker compose exec web npm run build` 全綠；黑洞重現測試（ingest 中 `restart api` → 啟動後變 `failed` 可一鍵重新解析成功）；漂移守護自證（暫加假欄位 → Postgres 守護測試必 fail）；前端連接中關 modal → 重開 → 連接鈕可用；安全（區網另一台裝置連 5432/8000 應失敗或明確記錄僅本機）；引用鏈 eval_citations 不退化（或 Postgres 層等效覆蓋）。
+
 ## 任務卡格式（放在 docs/tasks/，一任務一檔）
 
 ```markdown

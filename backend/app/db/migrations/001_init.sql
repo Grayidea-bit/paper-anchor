@@ -34,7 +34,8 @@ CREATE TABLE chunks (
     UNIQUE (document_id, chunk_index)
 );
 CREATE INDEX idx_chunks_document ON chunks(document_id);
--- ANN 索引（ivfflat）等資料量大再加；MVP 規模 per-document 精確掃描即可
+-- 刻意未建 ANN 索引（ivfflat/hnsw）：僅 document scope 精確掃描即夠；
+-- library/project scope 為全庫精確掃描，chunk 總數破 ~2 萬時應建（門檻卡見 docs/03-roadmap.md M15）
 
 CREATE TABLE conversations (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

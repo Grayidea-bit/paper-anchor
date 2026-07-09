@@ -42,6 +42,13 @@
 檔案儲存：本機 volume ./data/uploads（MVP），介面抽象以便換 S3
 ```
 
+### 部署假設（deployment assumptions，M15）
+
+本系統以**單機、單使用者、可信環境**為前提設計，兩條假設寫死在架構中，部署者須知悉：
+
+1. **單一 uvicorn worker / process**：backup/restore/reingest 的互斥鎖與 `settings_store` 設定快取皆為**模組級（per-process）狀態**，不跨行程共享。若以多 worker（`--workers N` 或多副本）啟動，各 worker 各持一份鎖與快取——併發互斥失效（可能同時跑兩份備份／還原）、設定更新只對接到請求的那個 worker 生效。故正式部署維持單 worker；lifespan 啟動時會偵測 worker 數並在多於一個時記警告日誌。
+2. **預設信任網段（API 無認證）**：API 本身不做身分驗證，安全模型倚賴網路邊界——`docker compose` 將對外埠綁定 `127.0.0.1`（僅本機，M15 T-FD-04），DB 埠不對外暴露。秘密（LLM key、OAuth token 等）存於 DB 的 `settings` 表（`settings_store` 白名單鍵，SECRET_KEYS 遮罩），不入 repo、不隨備份出庫（鐵律 6）。若需跨機存取，應以 SSH port-forward 或反向代理加認證，而非直接開放埠。
+
 ## 3. 核心設計決策
 
 ### D1 引用錨點機制（本產品的靈魂）
@@ -66,6 +73,9 @@
 - 上傳解析完成後 BackgroundTask 觸發，結果為結構化 JSON（研究問題/方法/發現/貢獻/限制，各含 `cited_chunks`），存 `documents.digest`。
 - 長文獻（>100 chunks）採 map-reduce：分段摘要 → 合併。
 - 文件狀態機：`uploaded → parsing → embedding → digesting → ready | failed(error_msg)`，前端輪詢 `GET /api/documents/{id}` 顯示進度。
+- **啟動時 reconciliation（M15 T-FD-01）**：程序被殺（重啟／OOM／`--reload`）會使 ingest 中途文獻永久卡在 `parsing`/`embedding` 這類 transient 殘態。lifespan 啟動時把所有卡在 transient 狀態的文獻視為「上一輪被中斷」，一律重置為 `failed`（帶 `error_msg`），使其可被重跑而非永久黑洞。
+- **ingest 冪等（M15 T-FD-01）**：`ingest_document` 開頭無條件 `delete_chunks`（廉價換冪等），任何重跑（reingest 端點、restore 修復、啟動重置後手動重試）都先清舊 chunks 再重建，不撞 `UNIQUE(document_id, chunk_index)`、不留半殘狀態。
+- **手動重跑入口**：`POST /api/documents/{id}/reingest`（見 §5）清舊 chunks 重跑 ingest；文獻不存在回 404；該文獻或全域 backup/restore 操作進行中回 409 `operation_running`。
 
 ### D5 NVIDIA NIM 供應商注意事項（llm.py 實作時必讀）
 - Chat 與 embedding 都走 `https://integrate.api.nvidia.com/v1`，OpenAI SDK 相容。
@@ -270,7 +280,9 @@ messages     (id, conversation_id, role, content TEXT,
 | notes | TEXT | 一到兩句白話補充說明（T-TR-04）；僅當建立時帶 `source_text` 且 LLM 成功依格式回覆才有值，否則為空字串；`retranslate` 不會更動此欄 |
 | created_at | TIMESTAMPTZ | 建立時間 |
 
-索引：`chunks(document_id)`、`chunks USING ivfflat (embedding vector_cosine_ops)`、`messages(conversation_id)`、`annotations(document_id)`、`glossary_entries(document_id)`。
+索引：`chunks(document_id)`、`messages(conversation_id)`、`annotations(document_id)`、`glossary_entries(document_id)`。
+
+> **刻意未建 ANN 向量索引（M15 校正）**：migration 001 未建 ivfflat/hnsw，向量檢索走精確掃描。此決策**僅 document scope 成立**——單篇文獻的 chunk 數少，全表精確掃描比 ANN 更準也夠快；但 **library/project scope 為全庫精確掃描**，成本隨 chunk 總數線性上升。**chunk 總數破 ~2 萬時應建 HNSW/ivfflat**（門檻卡見 `docs/03-roadmap.md` M15「明確不做」段，屆時再評估）。
 
 ## 5. API 規格（摘要）
 
@@ -281,6 +293,7 @@ messages     (id, conversation_id, role, content TEXT,
 | GET | /api/documents/{id} | 詳情（含 status/digest，供輪詢） |
 | GET | /api/documents/{id}/file | 取 PDF 原檔（供 PDF.js 渲染） |
 | DELETE | /api/documents/{id} | 刪除（含 chunks/conversations 級聯） |
+| POST | /api/documents/{id}/reingest | 重新解析文獻（清舊 chunks 重跑 ingest）→ 202；文獻不存在 404；該文獻或全域操作進行中 409 `operation_running`（M15，見 D4） |
 | GET | /api/documents/{id}/annotations | 文獻標註列表（T-AN-01） |
 | POST | /api/documents/{id}/annotations | 建立標註 → 201（T-AN-01） |
 | PATCH | /api/annotations/{id} | 更新標註 {note_text?, color?}（T-AN-01） |
